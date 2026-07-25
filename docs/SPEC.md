@@ -1,14 +1,38 @@
 # **Estándar Protocolo CTF - CC8 2026**
 
-> **Versión del documento:** 1.0.0  
-> **Versión del protocolo (campo `v` en los mensajes):** 1  
-> **Estado:** Vigente (Acuerdo de clase)  
-> **Última modificación:** 2026-07-24  
-> **Historial de cambios:** ver sección **6. Control de cambios** al final del documento.
+| Ficha Técnica de Especificación |               |
+| :------------------------------- | :------------ |
+| **Campo**                        | **Detalle**   |
+| **Versión del documento**       | 1.2.0         |
+| **Versión del protocolo (v)**   | 1             |
+| **Estado**                       | Vigente (Acuerdo de clase) |
+| **Última modificación**         | 2026-07-25    |
+| **Historial de cambios**         | Ver sección **7. Control de cambios** al final del documento.    |
 
-**Cómo leer este documento:** Las palabras **DEBE**, **NO DEBE** y **RECOMENDADO** son normativas: todo proyecto que no cumpla un **DEBE** es incompatible con el resto de la clase. Las secciones 1 a 5 definen el protocolo; la sección 6 define cómo se versiona y modifica este estándar.
+## **ABSTRACT**
+
+Este documento define el protocolo estándar para la competencia Capture The Flag (CTF) de la clase CC8 2026. Establece las bases técnicas de comunicación, el formato de mensajes JSON y las reglas de juego para garantizar la interoperabilidad entre diversos proyectos de software.
+
+## **TERMINOLOGÍA**
+
+Las palabras clave de esta especificación tienen carácter normativo:
+
+* **DEBE / NO DEBE:** Requisitos absolutos para la compatibilidad. Todo proyecto que no cumpla un **DEBE** es incompatible con el resto de la clase.  
+* **RECOMENDADO:** Prácticas sugeridas para estabilidad.  
+* **Coalescencia:** Capacidad del servidor de omitir estados antiguos en favor del más reciente ante clientes lentos.
+
 
 ## **1. CONEXIÓN**
+
+**Diagrama de Conexión:**
+
+```
+Cliente (UDP:8888) --discover--> Red Local (Broadcast)
+Servidor (UDP:Auto) <--server_info-- Cliente (Unicast)
+Cliente (TCP:tcp_port) --join--> Servidor
+```
+
+### **1.1 Transporte**
 
 ### **1.1 Transporte**
 
@@ -66,6 +90,12 @@ Requisitos para cada proyecto:
 > * El cliente debe incluir, sin excepción, la opción de conexión manual por IP como respaldo al broadcast (ver vía Manual arriba).
 
 ## **2. EL IDIOMA DE LOS MENSAJES**
+
+**Diagrama de Framing:**
+
+```
+[JSON Message 1]\n[JSON Message 2]\n[Part of JSON 3...]
+```
 
 ### **2.1 Delimitación de mensajes (framing)**
 
@@ -218,6 +248,12 @@ Define el lenguaje en que se escriben los mensajes y la codificación de caracte
 
 ## **3. REGLAS DE LA PARTIDA**
 
+**Ciclo de Vida:**
+
+```
+Lobby -> Countdown (5s) -> Playing -> Game Over -> Pausa (5s) -> Lobby
+```
+
 ### **3.1 Secuencia de la partida**
 
 > 1. Búsqueda de servidores disponibles (descubrimiento).  
@@ -356,9 +392,41 @@ El campo `reason` del mensaje `error` DEBE ser exactamente uno de estos códigos
 > 5. Un cliente no puede ganar enviando coordenadas ni declarando victoria: las posiciones y la victoria las calcula únicamente el servidor.  
 > 6. La misma secuencia de mensajes, en el mismo orden de llegada, produce el mismo resultado de dominio (determinismo).
 
-## **6. CONTROL DE CAMBIOS**
+## **6. CONSIDERACIONES DE SEGURIDAD**
 
-### **6.1 Versionado**
+### **6.1 Ausencia de Cifrado y Autenticación**
+
+El protocolo v1 transmite la información en texto plano mediante mensajes JSON sobre TCP/UDP. No implementa capas de cifrado (como TLS/DTLS) ni mecanismos de autenticación previa de usuarios (como tokens JWT o contraseñas).
+
+* **Entorno de Red:** Se asume que el juego opera exclusivamente en una Red de Área Local (LAN) o entorno controlado de pruebas.  
+* **Riesgo:** Cualquier usuario conectado a la misma red puede interceptar el tráfico (sniffing) o enviar paquetes falsificados imitando el `player_id` de otro participante. Para este estándar, este riesgo es aceptado por el alcance del proyecto.
+
+### **6.2 Denegación de Servicio (DoS) y Control de Memoria**
+
+Para evitar que un cliente malicioso o defectuoso agote los recursos de memoria o ancho de banda del servidor, la especificación impone tres barreras estrictas:
+
+1. **Límite de Tamaño de Mensaje (`message_max_size`):** Todo mensaje entrante que supere los 64 KB se rechaza con `MESSAGE_TOO_LARGE` y provoca el cierre inmediato del socket TCP. En UDP, los paquetes mayores a 64 KB se descartan silenciosamente.  
+2. **Saneamiento de Nombres (`name_max_length`):** Los nombres de jugadores están restringidos a un máximo de 20 caracteres UTF-8 tras aplicar recorte de espacios (`trim`) y eliminación de caracteres de control o saltos de línea.  
+3. **Control de Conexiones (`max_players`):** El servidor debe limitar la sala a 100 conexiones simultáneas. Las solicitudes `join` excedentes se rechazan con `LOBBY_FULL` y el socket se cierra.
+
+### **6.3 Validación de Entradas e Inyección en el Parser JSON**
+
+El servidor DEBE tratar todos los datos procedentes de los clientes como **no confiables**:
+
+* **Inyección de Tipos (Type Confusion):** El parser debe verificar que las coordenadas o vectores de dirección (`dir.x`, `dir.y`) sean estrictamente tipos numéricos enteros y no cadenas de texto o estructuras complejas.  
+* **Campos Faltantes o Desconocidos:** Un mensaje con campos faltantes se responde con `MISSING_FIELD` sin modificar el estado. Los campos no documentados deben ignorarse silenciosamente para permitir extensibilidad sin desestabilizar el servidor.
+
+### **6.4 Integridad de la Partida y Prevención de Trampas**
+
+Dado que el modelo es **100% Servidor-Autoritativo**, el cliente no tiene capacidad de dictar su posición global ni declarar victorias:
+
+* **Restricción de Velocidad y Teletransporte:** El servidor no acepta coordenadas X,Y del cliente; solo acepta vectores de intención `dir` restringidos estrictamente a los valores `{-1, 0, 1}`. Si un cliente envía valores fuera de este rango, el servidor responde `INVALID_FIELD`.  
+* **Transición de Victoria Obligatoria:** Para evitar que un cliente simule haber ganado sin cumplir el recorrido, el servidor valida internamente que el portador haya realizado la transición física de estar dentro del círculo (distancia ≤ 315) a estar completamente fuera (distancia > 315) conservando la bandera en todo momento.
+
+
+## **7. CONTROL DE CAMBIOS**
+
+### **7.1 Versionado**
 
 > * Este documento usa versionado semántico: **MAYOR.MENOR.PARCHE**.  
 > * **MAYOR:** Cambios incompatibles en el cable (mensajes nuevos, campos eliminados o renombrados, reglas que cambian el comportamiento de otro proyecto). Un cambio MAYOR incrementa también el campo `v` del protocolo.  
@@ -366,7 +434,7 @@ El campo `reason` del mensaje `error` DEBE ser exactamente uno de estos códigos
 > * **PARCHE:** Correcciones de redacción, ejemplos o formato sin cambio de comportamiento. No cambia `v`.  
 > * El campo `v` de los mensajes identifica la versión del **protocolo en el cable**, no la del documento; solo cambia con un cambio MAYOR.
 
-### **6.2 Procedimiento para modificar el estándar**
+### **7.2 Procedimiento para modificar el estándar**
 
 > 1. Cualquier estudiante propone el cambio al grupo completo (canal oficial de la clase), citando la sección afectada.  
 > 2. El cambio se discute y se aprueba por acuerdo de la clase; nadie modifica su implementación por cuenta propia.  
@@ -374,8 +442,10 @@ El campo `reason` del mensaje `error` DEBE ser exactamente uno de estos códigos
 > 4. Se notifica al grupo la nueva versión; todos los proyectos actualizan antes del siguiente día de pruebas.  
 > 5. El documento vive en un repositorio Git: cada versión aprobada queda como un commit identificable.
 
-### **6.3 Historial de cambios**
+### **7.3 Historial de cambios**
 
 | Versión | Fecha | Cambios | Autor(es)   |
 | :---- | :---- | :---- | :---- |
-| 1.0.0 | 2026-07-24 | Primera versión. Incorpora los acuerdos de revisión grupal: eliminación de campos no definidos en el catálogo (flag_version, action_id, input_seq, etc.) a favor de orden de llegada TCP + ejecución secuencial del servidor; eliminación del timeout de 8 s; catálogo de errores en MAYÚSCULAS con `GAME_STARTED` nuevo; `flag.owner` libre fijado en `null`; `min_players` = 2 con aborto de countdown vía broadcast de `lobby`; transición post-partida de 5 s con regreso al lobby sin reconexión; rechazo de joins en countdown/playing con `GAME_STARTED`; desconexiones inferidas comparando `state.players[]`; descubrimiento por broadcast dual (255.255.255.255 + subred), unicast manual a IP:8888 y respaldo IP:puerto; `SO_REUSEADDR`/`SO_REUSEPORT` en el socket de descubrimiento; centro fijado en (500,500) y fórmula de victoria distancia > 315 con transición dentro → fuera obligatoria; robo únicamente por distancia; bandera pegada al portador en `state`; fórmula de spawn en anillo R ∈ [350,450]; constantes de `welcome.config` declaradas fijas y no dinámicas. | Clase CC8 2026 |
+| 1.0.0 | 2026-07-18 | Versión inicial borrador. Contenía campos no definidos en el catálogo (flag_version, action_id, input_seq, mode, etc.), timeout de 8 s, códigos de error inconsistentes, `flag.owner` con valores ambiguos (`null` o `0`), reglas de victoria y descubrimiento incompletas. Usado como base para la revisión grupal. **No implementar.** | Clase CC8 2026 |
+| 1.1.0 | 2026-07-25 | Versión consolidada. Cambios con respecto a 1.0.0: (1) eliminación de campos fantasma (flag_version, action_id, input_seq, mode, version++, arrival_ordinal, request_id, match_ended, flag_changed) — todo desempate se basa en orden de llegada TCP + ejecución secuencial del servidor; (2) eliminación del timeout de 8 s (v1 no define timeout); (3) catálogo de errores unificado en MAYÚSCULAS_CON_GUIONES_BAJOS, con `GAME_STARTED` como nuevo código que cierra la conexión; (4) `flag.owner` libre fijado exclusivamente en `null` (se elimina `0` como opción); (5) `min_players=2` y aborto de countdown vía broadcast de `lobby`; (6) transición post-partida de 5 s con regreso al lobby sin reconexión; (7) rechazo de joins en countdown/playing con `GAME_STARTED` + cierre; (8) desconexiones inferidas comparando `state.players[]` entre ticks consecutivos; (9) descubrimiento por broadcast dual (255.255.255.255 + subred) con `SO_BROADCAST`, unicast manual a IP:8888 y respaldo IP:puerto; (10) `SO_REUSEADDR`/`SO_REUSEPORT` obligatorio en el socket UDP del servidor; (11) centro del mapa fijado en (500,500), victoria formalizada como transición distancia ≤ 315 → > 315 del centro conservando la bandera; (12) robo por distancia como único requisito (sin importar posición dentro/fuera del círculo); (13) bandera pegada al portador en `state` (`flag.x/y` = posición del portador); (14) fórmula de spawn en anillo R ∈ [350, 450] con θ aleatorio; (15) constantes de `welcome.config` declaradas fijas y no dinámicas, con justificación normativa; (16) advertencia sobre `\r\n` en framing; (17) límite de 64 KB aplicado también a datagramas UDP; (18) lectura tolerante de campos desconocidos en todos los mensajes; (19) nueva sección 6 (Control de cambios) con procedimiento de modificación e historial. **Incremento MENOR (1.1.0):** la v1.0.0 nunca fue ratificada ni implementada, por lo que no hay implementaciones existentes que romper; todos los cambios son aclaraciones, correcciones y llenado de huecos. El campo `v` del protocolo se mantiene en 1 (compatible en el cable). | Andrés Tobar |
+| 1.2.0 | 2026-07-25 | Estructuración bajo formato RFC. Inclusión de Abstract, Terminología, Diagramas ASCII y nueva sección 6 (Consideraciones de Seguridad) con ausencia de cifrado, control de memoria, validación de entradas y prevención de trampas. **Incremento MENOR (1.2.0):** todos los cambios son compatibles con v1; el campo `v` del protocolo se mantiene en 1. | Andrés Tobar |

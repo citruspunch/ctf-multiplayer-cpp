@@ -1,0 +1,45 @@
+# Build directories
+/build/
+/bin/
+/obj/
+/out/
+/.cache/
+
+# CMake / VS Code / CLion
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+.vscode/
+.idea/
+
+# Compiled binaries and objects
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.out
+
+# Debug and test artifacts
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env
+.env.*
+
+.agents/
+.github/
+
+
+opencode.json
