@@ -1,5 +1,6 @@
 add_executable(ctf_tests
     main_test.cpp
+    test_discovery.cpp
 )
 target_link_libraries(ctf_tests PRIVATE
     Catch2::Catch2WithMain

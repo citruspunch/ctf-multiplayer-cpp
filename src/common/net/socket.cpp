@@ -1,6 +1,25 @@
 #include "socket.hpp"
 
+#include <cstring>
+
+#ifdef _WIN32
+    #include <winsock2.h>
+#else
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
+
 namespace ctf::net {
+
+auto set_non_blocking(socket_t fd) -> bool {
+#ifdef _WIN32
+    u_long mode = 1;
+    return ioctlsocket(fd, FIONBIO, &mode) == 0;
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
+}
 
 void close_socket(socket_t& s) {
     if (s != invalid_socket) {

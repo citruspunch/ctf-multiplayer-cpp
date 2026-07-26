@@ -45,6 +45,10 @@ public:
     // Access the native handle.
     auto native_handle() const -> socket_t;
 
+    // Get the local port this socket is bound to (via getsockname).
+    // Returns 0 if not bound or on error.
+    auto local_port() const -> int;
+
     // Close the socket explicitly.
     void close();
 

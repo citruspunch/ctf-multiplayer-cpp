@@ -18,6 +18,9 @@ namespace ctf::net {
 // Close a socket and invalidate the handle.
 void close_socket(socket_t& s);
 
+// Set a socket to non-blocking mode. Returns true on success.
+auto set_non_blocking(socket_t fd) -> bool;
+
 // Return a human-readable string describing the last socket error.
 auto last_error() -> std::string;
 

@@ -62,6 +62,7 @@ auto UdpSocket::bind(int port) -> UdpSocket {
         return UdpSocket{};
     }
 
+    set_non_blocking(fd);
     return UdpSocket{fd};
 }
 
@@ -73,6 +74,7 @@ auto UdpSocket::make_broadcast() -> UdpSocket {
     setsockopt(fd, SOL_SOCKET, SO_BROADCAST,
                reinterpret_cast<const char*>(&opt), sizeof(opt));
 
+    set_non_blocking(fd);
     return UdpSocket{fd};
 }
 
@@ -111,6 +113,20 @@ auto UdpSocket::recv_from(char* buf, std::size_t len, sockaddr_in& sender) -> ss
 }
 
 auto UdpSocket::native_handle() const -> socket_t { return fd_; }
+
+auto UdpSocket::local_port() const -> int {
+    if (fd_ == invalid_socket) return 0;
+    sockaddr_in addr{};
+#ifdef _WIN32
+    int len = sizeof(addr);
+#else
+    socklen_t len = sizeof(addr);
+#endif
+    if (getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+        return ntohs(addr.sin_port);
+    }
+    return 0;
+}
 
 void UdpSocket::close() {
     close_socket(fd_);
