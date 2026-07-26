@@ -18,6 +18,8 @@ add_executable(ctf
     src/main.cpp
     src/server/server_view.cpp
     src/client/client.cpp
+    src/client/input.cpp
+    src/client/game_view.cpp
 )
 
 # Subdirectories

@@ -1,11 +1,13 @@
 #pragma once
 
 #include "framing.hpp"
+#include "input.hpp"
 #include "messages.hpp"
 #include "net/tcp_socket.hpp"
 #include "udp_discovery.hpp"
 
 #include <future>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -130,6 +132,10 @@ private:
     std::optional<State>     latest_state_;
     std::string              disconnect_reason_;
     std::string              status_line_;
+
+    // Game (Playing)
+    InputSampler                          input_;
+    std::map<std::string, std::string>    player_names_;  // id → name
 };
 
 }  // namespace ctf::client

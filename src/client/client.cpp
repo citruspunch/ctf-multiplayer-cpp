@@ -1,6 +1,7 @@
 #include "client.hpp"
 
 #include "constants.hpp"
+#include "game_view.hpp"
 #include "json.hpp"
 
 #include <raylib.h>
@@ -187,6 +188,11 @@ void Client::handle_message(const std::string& line) {
 
     if (auto* lobby = std::get_if<Lobby>(&msg)) {
         lobby_players_ = lobby->players;
+        // Keep an id → name map for the game view's player labels.
+        player_names_.clear();
+        for (const auto& p : lobby->players) {
+            player_names_[p.id] = p.name;
+        }
         // A lobby update during countdown/playing/game-over means the round
         // aborted or the post-game cycle restarted — return to the lobby.
         if (state_ == ClientState::JoinName ||
@@ -214,6 +220,7 @@ void Client::handle_message(const std::string& line) {
         if (state_ == ClientState::Countdown ||
             state_ == ClientState::Lobby) {
             latest_state_.reset();
+            input_.reset();  // Fresh round — neutral direction.
             state_ = ClientState::Playing;
         }
         return;
@@ -647,16 +654,29 @@ void Client::draw_countdown() {
 }
 
 // ── Screen: Playing ──────────────────────────────────────────────────────
-// Full game view (input + rendering) lands in a later task.
 
-void Client::update_playing() {}
+void Client::update_playing() {
+    input_.sample();
+
+    // Send `input` only when the direction actually changes.
+    if (input_.take_dir_changed()) {
+        nlohmann::json j;
+        j["type"] = "input";
+        j["dir"] = {{"x", input_.dir_x()}, {"y", input_.dir_y()}};
+        send_message(j);
+    }
+
+    // Send `interact` on E press (edge-detected).
+    if (input_.take_interact()) {
+        nlohmann::json j;
+        j["type"] = "interact";
+        send_message(j);
+    }
+}
 
 void Client::draw_playing() {
-    DrawText("Playing", 60, 40, 30, WHITE);
     if (latest_state_) {
-        const std::string line = "Players alive: " +
-                                 std::to_string(latest_state_->players.size());
-        DrawText(line.c_str(), 60, 95, 20, LIGHTGRAY);
+        draw_game_view(*latest_state_, player_id_, player_names_);
     } else {
         DrawText("Waiting for first state...", 60, 95, 20, GRAY);
     }
