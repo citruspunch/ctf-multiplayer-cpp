@@ -1,5 +1,6 @@
 #include "net/platform.hpp"
 #include "server/server.hpp"
+#include "client/client.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -30,7 +31,15 @@ int main(int argc, char* argv[]) {
 
         ctf::net::cleanup_net();
     } else if (mode == "--client") {
-        std::cout << "client mode\n";
+        if (!ctf::net::init_net()) {
+            std::cerr << "Failed to initialise networking.\n";
+            return 1;
+        }
+
+        ctf::client::Client client;
+        client.run();
+
+        ctf::net::cleanup_net();
     } else {
         std::cerr << "Error: expected --server or --client, got: " << mode << "\n";
         return 1;

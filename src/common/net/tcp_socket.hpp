@@ -14,6 +14,13 @@ public:
     // SO_REUSEADDR is enabled.  The socket is set to non-blocking.
     static auto listen(int port) -> TcpSocket;
 
+    // Connect to a remote host (IP or hostname) and TCP port.
+    // Waits up to `timeout_ms` for the connection to be established.
+    // The returned socket is non-blocking.  Returns an invalid socket
+    // on failure.
+    static auto connect(const std::string& host, int port,
+                        int timeout_ms = 3000) -> TcpSocket;
+
     // Default constructor — yields an invalid (empty) socket.
     TcpSocket() noexcept;
 

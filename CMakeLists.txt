@@ -12,9 +12,12 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
 
 # Main executable
+# Raylib UI sources are compiled directly into the executable (not the
+# static libraries) so Raylib/GLFW symbols resolve at link time on macOS.
 add_executable(ctf
     src/main.cpp
     src/server/server_view.cpp
+    src/client/client.cpp
 )
 
 # Subdirectories
