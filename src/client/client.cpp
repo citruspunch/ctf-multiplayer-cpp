@@ -546,7 +546,6 @@ void Client::draw_join_name() {
 }
 
 // ── Screen: Lobby ────────────────────────────────────────────────────────
-// Basic display for now — full table/config view lands in the next task.
 
 void Client::update_lobby() {}
 
@@ -554,31 +553,97 @@ void Client::draw_lobby() {
     DrawText("Lobby", 60, 40, 30, WHITE);
 
     const std::string id_line = "In waiting room — ID: " + player_id_;
-    DrawText(id_line.c_str(), 60, 95, 20, SKYBLUE);
+    DrawText(id_line.c_str(), 60, 92, 20, SKYBLUE);
 
-    const std::string count_line =
-        std::to_string(lobby_players_.size()) + " player(s) connected";
-    DrawText(count_line.c_str(), 60, 130, 18, LIGHTGRAY);
+    // ── Server config panel (from welcome) ──────────────────────────
+    constexpr float CX = 470, CY = 40, CW = 280, CH = 170;
+    DrawRectangle(CX, CY, CW, CH, PANEL_COLOR);
+    DrawRectangleLines(CX, CY, CW, CH, GRAY);
+    DrawText("Server config", CX + 12, CY + 10, 18, YELLOW);
+    if (config_) {
+        const auto line = [](const char* key, int value, float y) {
+            DrawText(key, CX + 12, static_cast<int>(y), 16, LIGHTGRAY);
+            const std::string v = std::to_string(value);
+            DrawText(v.c_str(), CX + 200, static_cast<int>(y), 16, WHITE);
+        };
+        line("map_size",        config_->map_size,        CY + 40);
+        line("circle_radius",   config_->circle_radius,   CY + 62);
+        line("player_radius",   config_->player_radius,   CY + 84);
+        line("interact_radius", config_->interact_radius, CY + 106);
+        line("speed",           config_->speed,           CY + 128);
+        line("tick_rate",       config_->tick_rate,       CY + 150);
+    } else {
+        DrawText("(no config)", CX + 12, CY + 40, 16, GRAY);
+    }
 
+    // ── Player table ────────────────────────────────────────────────
+    const std::string header = "Players (" +
+                               std::to_string(lobby_players_.size()) + "/" +
+                               std::to_string(constants::max_players) + ")";
+    DrawText(header.c_str(), 60, 150, 20, YELLOW);
+
+    constexpr float TX = 60, TY = 185, TW = 680, ROW_H = 28;
+    constexpr int MAX_ROWS = 16;
+    DrawRectangle(TX, TY, TW, ROW_H, PANEL_COLOR);
+    DrawText("ID", TX + 12, TY + 6, 16, YELLOW);
+    DrawText("Name", TX + 140, TY + 6, 16, YELLOW);
+
+    int row = 0;
+    for (const auto& p : lobby_players_) {
+        if (row >= MAX_ROWS) break;
+        const float ry = TY + ROW_H * (static_cast<float>(row) + 1.0f);
+        const bool is_self = (p.id == player_id_);
+        if (is_self) {
+            DrawRectangle(TX, ry, TW, ROW_H, SELECT_COLOR);
+        } else if (row % 2 == 0) {
+            DrawRectangle(TX, ry, TW, ROW_H, ROW_ALT_COLOR);
+        }
+        DrawText(p.id.c_str(), TX + 12, ry + 6, 16,
+                 is_self ? WHITE : LIGHTGRAY);
+        DrawText(p.name.c_str(), TX + 140, ry + 6, 16, WHITE);
+        if (is_self) {
+            DrawText("(you)", TX + 620, ry + 6, 16, SKYBLUE);
+        }
+        ++row;
+    }
+    DrawRectangleLines(TX, TY, TW, ROW_H * (MAX_ROWS + 1), GRAY);
+
+    // No start button — the countdown triggers automatically.
     if (lobby_players_.size() <
         static_cast<std::size_t>(constants::min_players)) {
-        DrawText("Waiting for more players...", 60, 165, 18, YELLOW);
+        DrawText("Waiting for more players — the game starts automatically "
+                 "when 2+ players are connected.",
+                 60, 700, 16, YELLOW);
+    } else {
+        DrawText("Enough players — get ready!", 60, 700, 16, GREEN);
+    }
+
+    if (!status_line_.empty()) {
+        DrawText(status_line_.c_str(), 60, 730, 16, RED);
     }
 }
 
 // ── Screen: Countdown ────────────────────────────────────────────────────
-// Basic display for now — polished view lands in the next task.
 
 void Client::update_countdown() {}
 
 void Client::draw_countdown() {
+    DrawText("Game starting", (WINDOW_W - MeasureText("Game starting", 28)) / 2,
+             220, 28, LIGHTGRAY);
+
+    // Large centred number, pulse once per second change.
     const std::string num = std::to_string(countdown_seconds_);
-    const int font_size = 120;
+    const float pulse =
+        1.0f + 0.15f * static_cast<float>(std::fmod(GetTime(), 1.0));
+    const int font_size = static_cast<int>(220.0f * pulse);
     const int tw = MeasureText(num.c_str(), font_size);
     DrawText(num.c_str(), (WINDOW_W - tw) / 2, (WINDOW_H - font_size) / 2,
              font_size, YELLOW);
-    DrawText("Get ready!", (WINDOW_W - MeasureText("Get ready!", 24)) / 2,
-             (WINDOW_H - font_size) / 2 + 140, 24, LIGHTGRAY);
+
+    const std::string info =
+        std::to_string(lobby_players_.size()) + " players in this round";
+    DrawText(info.c_str(), (WINDOW_W - MeasureText(info.c_str(), 20)) / 2, 560,
+             20, LIGHTGRAY);
 }
 
 // ── Screen: Playing ──────────────────────────────────────────────────────
