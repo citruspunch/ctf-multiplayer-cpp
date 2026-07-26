@@ -92,11 +92,16 @@ private:
     std::chrono::steady_clock::time_point post_game_start_;
     bool game_over_sent_{false};
 
+    // Deferred disconnect queue — collected during event processing,
+    // drained in cleanup_disconnected() to avoid iterator invalidation.
+    std::vector<net::socket_t> pending_disconnects_;
+
     // ── Event loop helpers ───────────────────────────────────────────
 
     void accept_new();
     void read_session(Session& session);
     void dispatch_message(Session& session, const std::string& raw);
+    void queue_disconnect(net::socket_t fd);
     void disconnect(net::socket_t fd);
     void cleanup_disconnected();
 

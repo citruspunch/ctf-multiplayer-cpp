@@ -101,7 +101,7 @@ void Server::run() {
             }
             if (poller_.is_writable(fd)) {
                 if (!session->try_send()) {
-                    disconnect(fd);
+                    queue_disconnect(fd);
                 }
             }
             ++it;
@@ -116,7 +116,7 @@ void Server::run() {
             process_post_game();
         }
 
-        // 4. Clean up disconnected sessions.
+        // 4. Clean up disconnected sessions (drains pending_disconnects_).
         cleanup_disconnected();
 
         // 5. Check for window close (placeholder — Raylib integration later).
@@ -147,28 +147,29 @@ void Server::read_session(Session& session) {
     if (n == SOCKET_ERROR) {
         int err = WSAGetLastError();
         if (err == WSAEWOULDBLOCK) return;
-        disconnect(session.fd);
+        queue_disconnect(session.fd);
         return;
     }
 #else
     auto n = ::read(session.fd, buf, sizeof(buf));
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return;
-        disconnect(session.fd);
+        queue_disconnect(session.fd);
         return;
     }
 #endif
 
     if (n == 0) {
         // Client closed the connection.
-        disconnect(session.fd);
+        queue_disconnect(session.fd);
         return;
     }
 
     try {
         session.recv_buf.append(buf, static_cast<std::size_t>(n));
     } catch (const framing::message_too_large_error&) {
-        send_error(session, MESSAGE_TOO_LARGE, true);
+        send_error(session, MESSAGE_TOO_LARGE, false);
+        queue_disconnect(session.fd);
         return;
     }
 
@@ -323,7 +324,7 @@ void Server::send_error(Session& session, const std::string& reason, bool close_
     send_to(session, framing::encode(json));
 
     if (close_conn) {
-        disconnect(session.fd);
+        queue_disconnect(session.fd);
     }
 }
 
@@ -462,9 +463,19 @@ void Server::disconnect(net::socket_t fd) {
     }
 }
 
+void Server::queue_disconnect(net::socket_t fd) {
+    // Avoid duplicates.
+    if (std::find(pending_disconnects_.begin(), pending_disconnects_.end(), fd)
+        == pending_disconnects_.end()) {
+        pending_disconnects_.push_back(fd);
+    }
+}
+
 void Server::cleanup_disconnected() {
-    // Sessions are removed immediately in disconnect(), so nothing to do here.
-    // This hook is kept for future use (e.g., lazy cleanup).
+    for (auto fd : pending_disconnects_) {
+        disconnect(fd);
+    }
+    pending_disconnects_.clear();
 }
 
 // ── Config ───────────────────────────────────────────────────────────────
