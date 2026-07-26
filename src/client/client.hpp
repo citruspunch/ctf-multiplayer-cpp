@@ -100,6 +100,10 @@ private:
                            float h);
     static void draw_spinner(float cx, float cy, const char* label);
 
+    // Look up a player's display name from the lobby roster, falling
+    // back to the id when the name is unknown.
+    auto name_of(const std::string& id) const -> std::string;
+
     // ── State ───────────────────────────────────────────────────────
     ClientState state_{ClientState::Discovery};
 
@@ -136,6 +140,9 @@ private:
     // Game (Playing)
     InputSampler                          input_;
     std::map<std::string, std::string>    player_names_;  // id → name
+    std::map<std::string, ctf::Player>    known_players_;  // last state
+    std::string                           departure_notice_;
+    double                                departure_notice_time_{0.0};
 };
 
 }  // namespace ctf::client

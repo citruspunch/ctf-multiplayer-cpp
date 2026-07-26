@@ -201,6 +201,8 @@ void Client::handle_message(const std::string& line) {
             state_ == ClientState::Playing ||
             state_ == ClientState::GameOver) {
             latest_state_.reset();
+            known_players_.clear();
+            departure_notice_.clear();
             winner_id_.clear();
             state_ = ClientState::Lobby;
         }
@@ -220,6 +222,8 @@ void Client::handle_message(const std::string& line) {
         if (state_ == ClientState::Countdown ||
             state_ == ClientState::Lobby) {
             latest_state_.reset();
+            known_players_.clear();  // Fresh round — rebuild from states.
+            departure_notice_.clear();
             input_.reset();  // Fresh round — neutral direction.
             state_ = ClientState::Playing;
         }
@@ -228,6 +232,22 @@ void Client::handle_message(const std::string& line) {
 
     if (auto* st = std::get_if<State>(&msg)) {
         if (state_ == ClientState::Playing) {
+            // Infer departures: players present in the previous state but
+            // missing from the new one have left the round.
+            std::map<std::string, ctf::Player> next;
+            for (const auto& p : st->players) {
+                next.emplace(p.id, p);
+            }
+            if (!known_players_.empty()) {
+                for (const auto& [id, p] : known_players_) {
+                    if (next.find(id) == next.end()) {
+                        departure_notice_ =
+                            name_of(id) + " left the game";
+                        departure_notice_time_ = GetTime();
+                    }
+                }
+            }
+            known_players_ = std::move(next);
             latest_state_ = *st;
         }
         return;
@@ -257,6 +277,9 @@ void Client::return_to_discovery(const std::string& status) {
     player_id_.clear();
     config_.reset();
     lobby_players_.clear();
+    player_names_.clear();
+    known_players_.clear();
+    departure_notice_.clear();
     latest_state_.reset();
     winner_id_.clear();
     selected_server_ = -1;
@@ -381,6 +404,13 @@ void Client::draw_spinner(float cx, float cy, const char* label) {
              static_cast<int>(cy + std::sin(angle) * RADIUS), WHITE);
     DrawText(label, static_cast<int>(cx + RADIUS + 10),
              static_cast<int>(cy - 10), 20, LIGHTGRAY);
+}
+
+auto Client::name_of(const std::string& id) const -> std::string {
+    if (auto it = player_names_.find(id); it != player_names_.end()) {
+        return it->second;
+    }
+    return id;
 }
 
 // ── Screen: Discovery ────────────────────────────────────────────────────
@@ -680,6 +710,14 @@ void Client::draw_playing() {
     } else {
         DrawText("Waiting for first state...", 60, 95, 20, GRAY);
     }
+
+    // Transient departure notice (fades after ~3 s).
+    if (!departure_notice_.empty() &&
+        GetTime() - departure_notice_time_ < 3.0) {
+        const int tw = MeasureText(departure_notice_.c_str(), 18);
+        DrawText(departure_notice_.c_str(),
+                 (WINDOW_W - tw) / 2, WINDOW_H - 40, 18, ORANGE);
+    }
 }
 
 // ── Screen: Game over ────────────────────────────────────────────────────
@@ -688,17 +726,22 @@ void Client::draw_playing() {
 void Client::update_game_over() {}
 
 void Client::draw_game_over() {
+    // Resolve the winner's display name from the lobby roster.
     std::string line;
     if (winner_id_ == player_id_) {
         line = "You won!";
     } else {
-        line = winner_id_ + " won!";
+        line = name_of(winner_id_) + " won!";
     }
     const int font_size = 48;
-    DrawText(line.c_str(), (WINDOW_W - MeasureText(line.c_str(), font_size)) / 2,
+    DrawText(line.c_str(),
+             (WINDOW_W - MeasureText(line.c_str(), font_size)) / 2,
              320, font_size, GOLD);
-    DrawText("Waiting for next round...",
-             (WINDOW_W - MeasureText("Waiting for next round...", 20)) / 2,
+
+    // The server sends `lobby` after the post-game pause (~5 s), which
+    // transitions the client back to the Lobby screen automatically.
+    DrawText("Returning to lobby...",
+             (WINDOW_W - MeasureText("Returning to lobby...", 20)) / 2,
              400, 20, LIGHTGRAY);
 }
 
