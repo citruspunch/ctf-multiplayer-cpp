@@ -46,6 +46,8 @@ public:
     auto recv(char* buf, std::size_t len) -> ssize_t;
 
     // Send `len` bytes from `data`.
+    // Returns the number of bytes sent (>= 0), -1 on EAGAIN/EWOULDBLOCK
+    // (retry later), or -2 on a real error (connection broken).
     auto send(const char* data, std::size_t len) -> ssize_t;
 
     // Access the native handle.

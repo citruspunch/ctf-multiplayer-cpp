@@ -189,12 +189,17 @@ auto TcpSocket::recv(char* buf, std::size_t len) -> ssize_t {
 auto TcpSocket::send(const char* data, std::size_t len) -> ssize_t {
 #ifdef _WIN32
     auto ret = ::send(fd_, data, static_cast<int>(len), 0);
-    if (ret == SOCKET_ERROR) return -1;
+    if (ret == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSAEWOULDBLOCK) return -1;  // retry later
+        return -2;                              // real error
+    }
     return static_cast<ssize_t>(ret);
 #else
     auto ret = ::write(fd_, data, len);
     if (ret < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;  // retry later
+        return -2;                                               // real error
     }
     return ret;
 #endif

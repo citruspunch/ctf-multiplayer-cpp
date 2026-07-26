@@ -150,8 +150,12 @@ void Client::flush_send() {
         auto n = socket_.send(send_buf_.data(), send_buf_.size());
         if (n > 0) {
             send_buf_.erase(0, static_cast<std::size_t>(n));
+        } else if (n == -1) {
+            break;  // EAGAIN — retry next frame.
         } else {
-            break;  // EAGAIN or error; recv path detects a real close.
+            // n == -2: real send error — connection is broken.
+            on_server_disconnected("Connection lost");
+            return;
         }
     }
 }
@@ -750,10 +754,11 @@ void Client::draw_game_over() {
 void Client::update_disconnected() {}
 
 void Client::draw_disconnected() {
-    DrawText("Disconnected", 60, 60, 30, RED);
+    DrawText("Server disconnected", 60, 60, 30, RED);
     DrawText(disconnect_reason_.c_str(), 60, 115, 20, LIGHTGRAY);
+    DrawText("The TCP connection was closed or lost.", 60, 145, 16, GRAY);
 
-    if (button("Back to menu", 60, 180, 200, 40)) {
+    if (button("Back to menu", 60, 200, 200, 40)) {
         return_to_discovery("");
     }
 }
