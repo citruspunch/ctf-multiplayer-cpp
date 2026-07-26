@@ -1,0 +1,10 @@
+add_executable(ctf_tests
+    main_test.cpp
+)
+target_link_libraries(ctf_tests PRIVATE
+    Catch2::Catch2WithMain
+    common
+    server
+    client
+)
+add_test(NAME ctf_tests COMMAND ctf_tests)
