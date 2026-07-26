@@ -1,0 +1,57 @@
+#pragma once
+
+#include "socket.hpp"
+
+#include <optional>
+#include <string>
+
+namespace ctf::net {
+
+// RAII, non-copyable, movable TCP socket.
+class TcpSocket {
+public:
+    // Create a listening TCP socket bound to the given port.
+    // SO_REUSEADDR is enabled.  The socket is set to non-blocking.
+    static auto listen(int port) -> TcpSocket;
+
+    // Default constructor — yields an invalid (empty) socket.
+    TcpSocket() noexcept;
+
+    // Wrap an existing native socket.
+    explicit TcpSocket(socket_t native) noexcept;
+
+    // Non-copyable.
+    TcpSocket(const TcpSocket&) = delete;
+    auto operator=(const TcpSocket&) -> TcpSocket& = delete;
+
+    // Movable.
+    TcpSocket(TcpSocket&& other) noexcept;
+    auto operator=(TcpSocket&& other) noexcept -> TcpSocket&;
+
+    ~TcpSocket();
+
+    // Accept a new incoming connection (non-blocking).
+    // Returns nullopt if no connection is pending (EAGAIN / EWOULDBLOCK).
+    auto accept() -> std::optional<TcpSocket>;
+
+    // Receive up to `len` bytes into `buf`.
+    // Returns -1 on EAGAIN/EWOULDBLOCK, 0 on closed.
+    auto recv(char* buf, std::size_t len) -> ssize_t;
+
+    // Send `len` bytes from `data`.
+    auto send(const char* data, std::size_t len) -> ssize_t;
+
+    // Access the native handle.
+    auto native_handle() const -> socket_t;
+
+    // Close the socket explicitly.
+    void close();
+
+    // Whether the socket is valid (open).
+    explicit operator bool() const noexcept;
+
+private:
+    socket_t fd_{invalid_socket};
+};
+
+}  // namespace ctf::net
