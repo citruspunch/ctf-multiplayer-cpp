@@ -3,6 +3,8 @@
 #include "json.hpp"
 #include "net/platform.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace ctf::server {
@@ -108,6 +110,10 @@ void Server::run() {
         // 3. Phase-specific logic.
         if (phase_ == Phase::Countdown) {
             process_countdown();
+        } else if (phase_ == Phase::Playing) {
+            game_tick();
+        } else if (phase_ == Phase::PostGame) {
+            process_post_game();
         }
 
         // 4. Clean up disconnected sessions.
@@ -279,12 +285,18 @@ void Server::handle_join(Session& session, const ctf::Join& msg) {
     }
 }
 
-void Server::handle_input(Session& /*session*/, const ctf::Input& /*msg*/) {
-    // Stub — will be implemented with game domain (TASK-013).
+void Server::handle_input(Session& session, const ctf::Input& msg) {
+    // Update the player's direction in the game state.
+    auto* ps = game::find_player(game_state_, session.player_id);
+    if (ps) {
+        ps->dir_x = msg.dir_x;
+        ps->dir_y = msg.dir_y;
+    }
 }
 
-void Server::handle_interact(Session& /*session*/) {
-    // Stub — will be implemented with game domain (TASK-013).
+void Server::handle_interact(Session& session) {
+    if (!session.joined) return;
+    pending_interacts_.push(session.player_id);
 }
 
 void Server::handle_error_result(Session& session, const ctf::Error& err) {
@@ -388,6 +400,17 @@ void Server::process_countdown() {
         auto json = msg::to_json(start_msg);
         broadcast(framing::encode(json));
 
+        // Spawn all joined players.
+        game_state_ = game::GameState{};
+        for (auto& [fd, session] : sessions_) {
+            if (!session->joined) continue;
+            auto ps = game::spawn_player(session->player_id,
+                                         session->player_name, rng_);
+            game_state_.players.push_back(std::move(ps));
+        }
+
+        last_tick_time_ = std::chrono::steady_clock::now();
+        tick_initialised_ = true;
         phase_ = Phase::Playing;
     } else if (remaining < countdown_remaining_) {
         // Second ticked — broadcast new countdown value.
@@ -402,19 +425,27 @@ void Server::disconnect(net::socket_t fd) {
     auto it = sessions_.find(fd);
     if (it == sessions_.end()) return;
 
-    // If in lobby or countdown, broadcast updated lobby.
+    std::string player_id = it->second->player_id;
     bool was_joined = it->second->joined;
     bool was_in_countdown = (phase_ == Phase::Countdown);
+    bool was_in_game = was_joined && (phase_ == Phase::Playing || phase_ == Phase::PostGame);
 
     // Close and remove.
     poller_.remove_fd(fd);
     it->second->fd = net::invalid_socket;
     sessions_.erase(it);
 
+    // Remove from game state if needed (handles carrier reset).
+    if (was_in_game) {
+        remove_player_from_game(player_id);
+    }
+
     // If no sessions left, reset to lobby.
     if (sessions_.empty()) {
         phase_ = Phase::Lobby;
+        game_state_ = game::GameState{};
         countdown_active_ = false;
+        game_over_sent_ = false;
         return;
     }
 
@@ -447,6 +478,143 @@ auto Server::make_config() -> ctf::Config {
         constants::speed,
         constants::tick_rate
     };
+}
+
+// ── Game tick (called during Playing phase) ──────────────────────────────
+
+void Server::game_tick() {
+    auto now = std::chrono::steady_clock::now();
+    if (!tick_initialised_) {
+        last_tick_time_ = now;
+        tick_initialised_ = true;
+        return;
+    }
+
+    double dt = std::chrono::duration<double>(now - last_tick_time_).count();
+    last_tick_time_ = now;
+
+    // Clamp dt to prevent large jumps.
+    if (dt > 1.0) dt = 1.0;
+
+    // 1. Move all players.
+    for (auto& ps : game_state_.players) {
+        game::move_player(ps, dt);
+    }
+
+    // 2. Check victory for the carrier BEFORE interactions.
+    std::string winner_id;
+    if (game_state_.flag.owner.has_value()) {
+        if (game::check_victory(game_state_, game_state_.flag.owner.value())) {
+            winner_id = game_state_.flag.owner.value();
+        }
+    }
+
+    if (!winner_id.empty()) {
+        game_over_sent_ = true;
+        broadcast_game_over(winner_id);
+        phase_ = Phase::PostGame;
+        post_game_start_ = std::chrono::steady_clock::now();
+        return;
+    }
+
+    // 3. Process pending interacts in arrival order.
+    while (!pending_interacts_.empty()) {
+        auto actor_id = pending_interacts_.front();
+        pending_interacts_.pop();
+        game::process_interact(game_state_, actor_id);
+    }
+
+    // 4. Update flag position to carrier position.
+    if (game_state_.flag.owner.has_value()) {
+        auto* carrier = game::find_player(game_state_, game_state_.flag.owner.value());
+        if (carrier) {
+            game_state_.flag.x = carrier->x;
+            game_state_.flag.y = carrier->y;
+        } else {
+            // Carrier disconnected — reset flag (handled in remove_player).
+            game::reset_flag(game_state_);
+        }
+    }
+
+    // 5. Broadcast state.
+    broadcast_state();
+}
+
+// ── State broadcast ──────────────────────────────────────────────────────
+
+void Server::broadcast_state() {
+    ctf::State state_msg;
+
+    // Flag.
+    if (game_state_.flag.owner.has_value()) {
+        state_msg.flag.owner = game_state_.flag.owner;
+    }
+    state_msg.flag.x = game::round_1dp(game_state_.flag.x);
+    state_msg.flag.y = game::round_1dp(game_state_.flag.y);
+
+    // Players (only connected ones).
+    for (const auto& ps : game_state_.players) {
+        // Skip players whose session has disconnected.
+        bool connected = false;
+        for (const auto& [fd, s] : sessions_) {
+            if (s->player_id == ps.id) { connected = true; break; }
+        }
+        if (!connected) continue;
+
+        state_msg.players.push_back(ctf::Player{
+            ps.id,
+            game::round_1dp(ps.x),
+            game::round_1dp(ps.y)
+        });
+    }
+
+    auto json = msg::to_json(state_msg);
+    broadcast(framing::encode(json));
+}
+
+// ── Game over broadcast ──────────────────────────────────────────────────
+
+void Server::broadcast_game_over(const std::string& winner_id) {
+    ctf::GameOver go;
+    go.winner = winner_id;
+    auto json = msg::to_json(go);
+    broadcast(framing::encode(json));
+}
+
+// ── Remove player from game state ────────────────────────────────────────
+
+void Server::remove_player_from_game(const std::string& player_id) {
+    // If carrier, reset flag to centre.
+    if (game_state_.flag.owner.has_value() &&
+        game_state_.flag.owner.value() == player_id) {
+        game::reset_flag(game_state_);
+    }
+
+    // Remove from players vector.
+    auto it = std::remove_if(game_state_.players.begin(),
+                             game_state_.players.end(),
+                             [&](const game::PlayerState& ps) {
+                                 return ps.id == player_id;
+                             });
+    game_state_.players.erase(it, game_state_.players.end());
+}
+
+// ── Post-game processing ─────────────────────────────────────────────────
+
+void Server::process_post_game() {
+    if (!game_over_sent_) return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - post_game_start_).count();
+
+    if (elapsed >= constants::post_game_seconds) {
+        // Clear game state, return to lobby.
+        game_state_ = game::GameState{};
+        game_over_sent_ = false;
+        phase_ = Phase::Lobby;
+        broadcast_lobby();
+    }
 }
 
 }  // namespace ctf::server

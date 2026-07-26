@@ -1,6 +1,7 @@
 #pragma once
 
 #include "framing.hpp"
+#include "game.hpp"
 #include "messages.hpp"
 #include "net/poller.hpp"
 #include "net/tcp_socket.hpp"
@@ -10,7 +11,10 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <random>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ctf::server {
 
@@ -72,6 +76,22 @@ private:
     std::chrono::steady_clock::time_point countdown_start_;
     bool countdown_active_{false};
 
+    // ── Game domain state ───────────────────────────────────────────
+
+    game::GameState game_state_;
+    std::mt19937 rng_{std::random_device{}()};
+
+    // Interact actions received during Playing phase, in TCP arrival order.
+    std::queue<std::string> pending_interacts_;
+
+    // Simulation timing.
+    std::chrono::steady_clock::time_point last_tick_time_;
+    bool tick_initialised_{false};
+
+    // Post-game timer.
+    std::chrono::steady_clock::time_point post_game_start_;
+    bool game_over_sent_{false};
+
     // ── Event loop helpers ───────────────────────────────────────────
 
     void accept_new();
@@ -95,6 +115,8 @@ private:
     void broadcast(const std::string& msg);
     void broadcast_lobby();
     void broadcast_countdown(int sec);
+    void broadcast_state();
+    void broadcast_game_over(const std::string& winner_id);
 
     // ── Countdown ────────────────────────────────────────────────────
 
@@ -102,6 +124,12 @@ private:
     void abort_countdown();
     void process_countdown();
     auto session_count() const -> int;
+
+    // ── Game tick ────────────────────────────────────────────────────
+
+    void game_tick();
+    void remove_player_from_game(const std::string& player_id);
+    void process_post_game();
 
     // ── Config ───────────────────────────────────────────────────────
 
