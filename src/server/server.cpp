@@ -1,0 +1,452 @@
+#include "server.hpp"
+
+#include "json.hpp"
+#include "net/platform.hpp"
+
+#include <cstring>
+
+namespace ctf::server {
+
+// ── Session ──────────────────────────────────────────────────────────────
+
+Session::Session(net::socket_t fd)
+    : fd(fd) {}
+
+void Session::queue_message(const std::string& msg) {
+    // Detect whether this is a state message (for coalescing).
+    // We check for "\"type\":\"state\"" as a lightweight heuristic.
+    bool is_state = msg.find("\"type\":\"state\"") != std::string::npos;
+
+    if (is_state) {
+        // Replace any pending coalesced state.
+        coalesced_state = msg;
+    } else {
+        // Non-state message: flush any pending coalesced state first.
+        if (coalesced_state.has_value()) {
+            send_queue.push(std::move(*coalesced_state));
+            coalesced_state.reset();
+        }
+        send_queue.push(msg);
+    }
+    wants_write = true;
+}
+
+auto Session::try_send() -> bool {
+    while (!send_queue.empty()) {
+        auto& msg = send_queue.front();
+        auto ret = ::send(fd, msg.data(), msg.size(), 0);
+        if (ret < 0) {
+            // EAGAIN / EWOULDBLOCK — try again later.
+#ifdef _WIN32
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK) break;
+#else
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+#endif
+            return false;  // connection broken
+        }
+        send_queue.pop();
+    }
+
+    // If the queue is empty and there's a coalesced state, promote it.
+    if (send_queue.empty() && coalesced_state.has_value()) {
+        send_queue.push(std::move(*coalesced_state));
+        coalesced_state.reset();
+        // Try to send immediately.
+        return try_send();
+    }
+
+    if (send_queue.empty()) {
+        wants_write = false;
+    }
+    return true;
+}
+
+// ── Server ───────────────────────────────────────────────────────────────
+
+Server::Server(int port) {
+    listener_ = net::TcpSocket::listen(port);
+    // If listen failed, listener_ will be invalid — run() will return
+    // immediately.
+    if (listener_) {
+        poller_.add_fd(listener_.native_handle(), true, false);
+    }
+}
+
+Server::~Server() {
+    sessions_.clear();
+    if (listener_) {
+        poller_.remove_fd(listener_.native_handle());
+    }
+}
+
+void Server::run() {
+    if (!listener_) return;
+
+    while (true) {
+        int ret = poller_.poll(50);  // ~20 Hz
+
+        if (ret < 0) continue;  // poll error, retry
+
+        // 1. Accept new connections.
+        accept_new();
+
+        // 2. Process readable sessions.
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            auto& [fd, session] = *it;
+            if (poller_.is_readable(fd)) {
+                read_session(*session);
+            }
+            if (poller_.is_writable(fd)) {
+                if (!session->try_send()) {
+                    disconnect(fd);
+                }
+            }
+            ++it;
+        }
+
+        // 3. Phase-specific logic.
+        if (phase_ == Phase::Countdown) {
+            process_countdown();
+        }
+
+        // 4. Clean up disconnected sessions.
+        cleanup_disconnected();
+
+        // 5. Check for window close (placeholder — Raylib integration later).
+        // In this skeleton we let the user Ctrl-C to stop.
+    }
+}
+
+// ── Accept new connections ───────────────────────────────────────────────
+
+void Server::accept_new() {
+    if (!poller_.is_readable(listener_.native_handle())) return;
+
+    while (auto client = listener_.accept()) {
+        auto fd = client->native_handle();
+        auto session = std::make_unique<Session>(fd);
+
+        poller_.add_fd(fd, true, true);  // want both read and write
+        sessions_[fd] = std::move(session);
+    }
+}
+
+// ── Read and dispatch ────────────────────────────────────────────────────
+
+void Server::read_session(Session& session) {
+    char buf[4096];
+#ifdef _WIN32
+    auto n = ::recv(session.fd, buf, sizeof(buf), 0);
+    if (n == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSAEWOULDBLOCK) return;
+        disconnect(session.fd);
+        return;
+    }
+#else
+    auto n = ::read(session.fd, buf, sizeof(buf));
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+        disconnect(session.fd);
+        return;
+    }
+#endif
+
+    if (n == 0) {
+        // Client closed the connection.
+        disconnect(session.fd);
+        return;
+    }
+
+    try {
+        session.recv_buf.append(buf, static_cast<std::size_t>(n));
+    } catch (const framing::message_too_large_error&) {
+        send_error(session, MESSAGE_TOO_LARGE, true);
+        return;
+    }
+
+    // Extract all complete messages from the buffer.
+    while (auto msg = session.recv_buf.extract()) {
+        dispatch_message(session, *msg);
+    }
+}
+
+void Server::dispatch_message(Session& session, const std::string& raw) {
+    // Parse the raw line as JSON.
+    auto json = json::parse_line(raw);
+    if (!json) {
+        send_error(session, INVALID_JSON, false);
+        return;
+    }
+
+    // Convert to a typed message variant.
+    auto msg = msg::from_json(*json);
+
+    // Dispatch based on variant type.
+    if (auto* err = std::get_if<ctf::Error>(&msg)) {
+        handle_error_result(session, *err);
+        return;
+    }
+
+    // -- Phase-dependent dispatch --
+
+    if (phase_ == Phase::Lobby) {
+        // Only 'join' is allowed in lobby.
+        if (auto* join = std::get_if<ctf::Join>(&msg)) {
+            handle_join(session, *join);
+        } else {
+            handle_unknown_type(session);
+        }
+        return;
+    }
+
+    if (phase_ == Phase::Countdown || phase_ == Phase::Playing) {
+        // 'join' → GAME_STARTED + close.
+        if (std::get_if<ctf::Join>(&msg)) {
+            send_error(session, GAME_STARTED, true);
+            return;
+        }
+
+        // Not joined yet → NOT_JOINED.
+        if (!session.joined) {
+            send_error(session, NOT_JOINED, false);
+            return;
+        }
+    }
+
+    if (phase_ == Phase::Countdown) {
+        // In countdown, only input/interact after start are invalid.
+        if (std::get_if<ctf::Input>(&msg) || std::get_if<ctf::Interact>(&msg)) {
+            send_error(session, INVALID_PHASE, false);
+        } else {
+            handle_unknown_type(session);
+        }
+        return;
+    }
+
+    if (phase_ == Phase::Playing) {
+        if (auto* input = std::get_if<ctf::Input>(&msg)) {
+            handle_input(session, *input);
+        } else if (std::get_if<ctf::Interact>(&msg)) {
+            handle_interact(session);
+        } else {
+            handle_unknown_type(session);
+        }
+        return;
+    }
+
+    // PostGame: ignore all client messages.
+    if (phase_ == Phase::PostGame) {
+        return;
+    }
+}
+
+// ── Message handlers ─────────────────────────────────────────────────────
+
+void Server::handle_join(Session& session, const ctf::Join& msg) {
+    // Already joined → INVALID_PHASE (no close).
+    if (session.joined) {
+        send_error(session, INVALID_PHASE, false);
+        return;
+    }
+
+    // Name already validated by msg::from_json (NAME_INVALID).
+    // Version already validated (VERSION_MISMATCH).
+
+    // Lobby full → LOBBY_FULL + close.
+    if (sessions_.size() >= static_cast<std::size_t>(constants::max_players)) {
+        send_error(session, LOBBY_FULL, true);
+        return;
+    }
+
+    // Assign player ID.
+    session.player_id = "p" + std::to_string(next_player_id_++);
+    session.player_name = msg.name;
+    session.joined = true;
+
+    // Send welcome with the fixed config.
+    ctf::Welcome welcome{session.player_id, make_config()};
+    auto welcome_json = msg::to_json(welcome);
+    send_to(session, framing::encode(welcome_json));
+
+    // Broadcast updated lobby to all.
+    broadcast_lobby();
+
+    // Check if we should start countdown.
+    if (session_count() >= constants::min_players) {
+        start_countdown();
+    }
+}
+
+void Server::handle_input(Session& /*session*/, const ctf::Input& /*msg*/) {
+    // Stub — will be implemented with game domain (TASK-013).
+}
+
+void Server::handle_interact(Session& /*session*/) {
+    // Stub — will be implemented with game domain (TASK-013).
+}
+
+void Server::handle_error_result(Session& session, const ctf::Error& err) {
+    // Forward validation errors to the client.
+    send_to(session, framing::encode(msg::to_json(err)));
+}
+
+void Server::handle_unknown_type(Session& session) {
+    send_error(session, INVALID_PHASE, false);
+}
+
+// ── Sending ──────────────────────────────────────────────────────────────
+
+void Server::send_to(Session& session, const std::string& msg) {
+    session.queue_message(msg);
+    if (session.wants_write) {
+        poller_.add_fd(session.fd, true, true);
+    }
+}
+
+void Server::send_error(Session& session, const std::string& reason, bool close_conn) {
+    ctf::Error err{reason};
+    auto json = msg::to_json(err);
+    send_to(session, framing::encode(json));
+
+    if (close_conn) {
+        disconnect(session.fd);
+    }
+}
+
+void Server::broadcast(const std::string& msg) {
+    for (auto& [fd, session] : sessions_) {
+        send_to(*session, msg);
+    }
+}
+
+void Server::broadcast_lobby() {
+    ctf::Lobby lobby_msg;
+    for (auto& [fd, session] : sessions_) {
+        if (!session->joined) continue;
+        lobby_msg.players.push_back(
+            PlayerInfo{session->player_id, session->player_name});
+    }
+
+    auto json = msg::to_json(lobby_msg);
+    broadcast(framing::encode(json));
+}
+
+void Server::broadcast_countdown(int sec) {
+    ctf::Countdown cd{sec};
+    auto json = msg::to_json(cd);
+    broadcast(framing::encode(json));
+}
+
+// ── Countdown ────────────────────────────────────────────────────────────
+
+auto Server::session_count() const -> int {
+    int count = 0;
+    for (const auto& [fd, session] : sessions_) {
+        if (session->joined) ++count;
+    }
+    return count;
+}
+
+void Server::start_countdown() {
+    if (phase_ != Phase::Lobby) return;
+
+    phase_ = Phase::Countdown;
+    countdown_remaining_ = constants::countdown_seconds;
+    countdown_start_ = std::chrono::steady_clock::now();
+    countdown_active_ = true;
+
+    broadcast_countdown(countdown_remaining_);
+}
+
+void Server::abort_countdown() {
+    countdown_active_ = false;
+    phase_ = Phase::Lobby;
+    broadcast_lobby();
+}
+
+void Server::process_countdown() {
+    if (!countdown_active_) return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - countdown_start_).count();
+
+    // Check for player drop below minimum.
+    if (session_count() < constants::min_players) {
+        abort_countdown();
+        return;
+    }
+
+    int remaining = constants::countdown_seconds - static_cast<int>(elapsed);
+    if (remaining <= 0) {
+        // Countdown finished — broadcast start and transition to playing.
+        countdown_active_ = false;
+
+        ctf::Start start_msg;
+        auto json = msg::to_json(start_msg);
+        broadcast(framing::encode(json));
+
+        phase_ = Phase::Playing;
+    } else if (remaining < countdown_remaining_) {
+        // Second ticked — broadcast new countdown value.
+        countdown_remaining_ = remaining;
+        broadcast_countdown(countdown_remaining_);
+    }
+}
+
+// ── Disconnect ───────────────────────────────────────────────────────────
+
+void Server::disconnect(net::socket_t fd) {
+    auto it = sessions_.find(fd);
+    if (it == sessions_.end()) return;
+
+    // If in lobby or countdown, broadcast updated lobby.
+    bool was_joined = it->second->joined;
+    bool was_in_countdown = (phase_ == Phase::Countdown);
+
+    // Close and remove.
+    poller_.remove_fd(fd);
+    it->second->fd = net::invalid_socket;
+    sessions_.erase(it);
+
+    // If no sessions left, reset to lobby.
+    if (sessions_.empty()) {
+        phase_ = Phase::Lobby;
+        countdown_active_ = false;
+        return;
+    }
+
+    // Broadcast updated lobby if needed.
+    if (was_joined) {
+        if (phase_ == Phase::Lobby || was_in_countdown) {
+            broadcast_lobby();
+        }
+
+        // Abort countdown if below minimum.
+        if (was_in_countdown && session_count() < constants::min_players) {
+            abort_countdown();
+        }
+    }
+}
+
+void Server::cleanup_disconnected() {
+    // Sessions are removed immediately in disconnect(), so nothing to do here.
+    // This hook is kept for future use (e.g., lazy cleanup).
+}
+
+// ── Config ───────────────────────────────────────────────────────────────
+
+auto Server::make_config() -> ctf::Config {
+    return ctf::Config{
+        constants::map_size,
+        constants::circle_radius,
+        constants::player_radius,
+        constants::interact_radius,
+        constants::speed,
+        constants::tick_rate
+    };
+}
+
+}  // namespace ctf::server
