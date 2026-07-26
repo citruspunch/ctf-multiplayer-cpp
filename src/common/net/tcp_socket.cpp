@@ -207,6 +207,20 @@ auto TcpSocket::send(const char* data, std::size_t len) -> ssize_t {
 
 auto TcpSocket::native_handle() const -> socket_t { return fd_; }
 
+auto TcpSocket::local_port() const -> int {
+    if (fd_ == invalid_socket) return 0;
+    sockaddr_in addr{};
+#ifdef _WIN32
+    int len = sizeof(addr);
+#else
+    socklen_t len = sizeof(addr);
+#endif
+    if (getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+        return ntohs(addr.sin_port);
+    }
+    return 0;
+}
+
 void TcpSocket::close() {
     close_socket(fd_);
 }

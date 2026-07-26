@@ -6,6 +6,7 @@
 #include "net/poller.hpp"
 #include "net/tcp_socket.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -53,7 +54,10 @@ public:
 
 class Server {
 public:
-    explicit Server(int port = constants::default_tcp_port);
+    // `headless` skips the Raylib observer window — used by integration
+    // tests so the server can run in a background thread without a GUI.
+    explicit Server(int port = constants::default_tcp_port,
+                    bool headless = false);
     ~Server();
 
     Server(const Server&) = delete;
@@ -62,8 +66,14 @@ public:
     auto operator=(Server&&) -> Server& = delete;
 
     // Run the main event loop.  Returns after the user closes the window
-    // or an unrecoverable error occurs.
+    // (non-headless) or stop() is called (headless).
     void run();
+
+    // Signal the event loop to exit (headless mode only).
+    void stop();
+
+    // The TCP port the listener is bound to (0 if listen failed).
+    auto port() const -> int;
 
 private:
     net::TcpSocket listener_;
@@ -101,6 +111,8 @@ private:
 
     // Optional Raylib observer window.
     std::unique_ptr<ServerView> view_;
+    bool headless_{false};
+    std::atomic<bool> running_{true};
 
     // ── Event loop helpers ───────────────────────────────────────────
 

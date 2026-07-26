@@ -53,6 +53,10 @@ public:
     // Access the native handle.
     auto native_handle() const -> socket_t;
 
+    // Return the locally-bound port (useful after listen(0)).
+    // Returns 0 on failure.
+    auto local_port() const -> int;
+
     // Close the socket explicitly.
     void close();
 

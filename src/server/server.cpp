@@ -67,7 +67,8 @@ auto Session::try_send() -> bool {
 
 // ── Server ───────────────────────────────────────────────────────────────
 
-Server::Server(int port) {
+Server::Server(int port, bool headless)
+    : headless_(headless) {
     listener_ = net::TcpSocket::listen(port);
     // If listen failed, listener_ will be invalid — run() will return
     // immediately.
@@ -83,19 +84,31 @@ Server::~Server() {
     }
 }
 
+void Server::stop() {
+    running_.store(false);
+}
+
+auto Server::port() const -> int {
+    return listener_ ? listener_.local_port() : 0;
+}
+
 void Server::run() {
     if (!listener_) return;
 
-    // Create the observer view.
-    view_ = std::make_unique<ServerView>(game_state_);
+    // Create the observer view (skipped in headless mode).
+    if (!headless_) {
+        view_ = std::make_unique<ServerView>(game_state_);
+    }
 
     while (true) {
         int ret = poller_.poll(50);  // ~20 Hz
 
         if (ret < 0) continue;  // poll error, retry
 
-        // 0. Check if the window was closed.
-        if (view_ && view_->should_close()) {
+        // 0. Check exit conditions.
+        if (headless_) {
+            if (!running_.load()) break;
+        } else if (view_ && view_->should_close()) {
             break;
         }
 
