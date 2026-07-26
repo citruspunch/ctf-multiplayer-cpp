@@ -8,11 +8,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Dependencies via vcpkg manifest mode
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(raylib CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
 
 # Main executable
 add_executable(ctf
     src/main.cpp
+    src/server/server_view.cpp
 )
 
 # Subdirectories
@@ -24,6 +26,7 @@ add_subdirectory(src/client)
 target_link_libraries(ctf PRIVATE
     nlohmann_json::nlohmann_json
     raylib
+    glfw
     common
     server
     client

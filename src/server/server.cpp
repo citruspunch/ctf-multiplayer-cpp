@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "server_view.hpp"
 
 #include "json.hpp"
 #include "net/platform.hpp"
@@ -85,13 +86,23 @@ Server::~Server() {
 void Server::run() {
     if (!listener_) return;
 
+    // Create the observer view.
+    view_ = std::make_unique<ServerView>(game_state_);
+
     while (true) {
         int ret = poller_.poll(50);  // ~20 Hz
 
         if (ret < 0) continue;  // poll error, retry
 
+        // 0. Check if the window was closed.
+        if (view_ && view_->should_close()) {
+            break;
+        }
+
         // 1. Accept new connections.
         accept_new();
+
+        // 2. Process readable sessions.
 
         // 2. Process readable sessions.
         for (auto it = sessions_.begin(); it != sessions_.end();) {
@@ -118,6 +129,40 @@ void Server::run() {
 
         // 4. Clean up disconnected sessions (drains pending_disconnects_).
         cleanup_disconnected();
+
+        // 5. Render the observer window.
+        if (view_) {
+            std::string phase_text;
+            switch (phase_) {
+                case Phase::Lobby:
+                    phase_text = "LOBBY";
+                    break;
+                case Phase::Countdown:
+                    phase_text = "COUNTDOWN " + std::to_string(countdown_remaining_);
+                    break;
+                case Phase::Playing:
+                    phase_text = "PLAYING";
+                    break;
+                case Phase::PostGame:
+                    if (game_over_sent_) {
+                        // Find winner name.
+                        std::string winner_name;
+                        for (const auto& ps : game_state_.players) {
+                            if (game_state_.flag.owner.has_value() &&
+                                ps.id == game_state_.flag.owner.value()) {
+                                winner_name = ps.name;
+                                break;
+                            }
+                        }
+                        if (winner_name.empty()) winner_name = game_state_.flag.owner.value_or("?");
+                        phase_text = "GAME OVER — Winner: " + winner_name;
+                    } else {
+                        phase_text = "POST GAME";
+                    }
+                    break;
+            }
+            view_->render(phase_text);
+        }
 
         // 5. Check for window close (placeholder — Raylib integration later).
         // In this skeleton we let the user Ctrl-C to stop.

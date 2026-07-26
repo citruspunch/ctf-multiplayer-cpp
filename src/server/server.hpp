@@ -18,6 +18,9 @@
 
 namespace ctf::server {
 
+// Forward declaration (Raylib-heavy class defined in server_view.hpp).
+class ServerView;
+
 enum class Phase { Lobby, Countdown, Playing, PostGame };
 
 // ── Session: per-connection state ────────────────────────────────────────
@@ -95,6 +98,9 @@ private:
     // Deferred disconnect queue — collected during event processing,
     // drained in cleanup_disconnected() to avoid iterator invalidation.
     std::vector<net::socket_t> pending_disconnects_;
+
+    // Optional Raylib observer window.
+    std::unique_ptr<ServerView> view_;
 
     // ── Event loop helpers ───────────────────────────────────────────
 
