@@ -225,6 +225,12 @@ void TcpSocket::close() {
     close_socket(fd_);
 }
 
+auto TcpSocket::release() -> socket_t {
+    socket_t fd = fd_;
+    fd_ = invalid_socket;
+    return fd;
+}
+
 TcpSocket::operator bool() const noexcept {
     return fd_ != invalid_socket;
 }

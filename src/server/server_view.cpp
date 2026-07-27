@@ -1,4 +1,5 @@
 #include "server_view.hpp"
+#include "server.hpp"
 #include "constants.hpp"
 
 #include <raylib.h>
@@ -9,6 +10,66 @@ namespace ctf::server {
 
 static constexpr int WINDOW_W = 800;
 static constexpr int WINDOW_H = 800;
+
+// ── Server destructor (defined here where ServerView is complete) ─────────
+
+Server::~Server() {
+    sessions_.clear();
+    if (listener_) {
+        poller_.remove_fd(listener_.native_handle());
+    }
+}
+
+// ── Observer view lifecycle ──────────────────────────────────────────────
+
+void ServerViewDeleter::operator()(ServerView* p) const noexcept {
+    delete p;
+}
+
+void Server::init_observer() {
+    if (headless_) return;
+    view_.reset(new ServerView(game_state_));
+}
+
+void Server::render_observer() {
+    if (!view_) return;
+
+    std::string phase_text;
+    switch (phase_) {
+        case Phase::Lobby:
+            phase_text = "LOBBY";
+            break;
+        case Phase::Countdown:
+            phase_text = "COUNTDOWN " + std::to_string(countdown_remaining_);
+            break;
+        case Phase::Playing:
+            phase_text = "PLAYING";
+            break;
+        case Phase::PostGame:
+            if (game_over_sent_) {
+                std::string winner_name;
+                for (const auto& ps : game_state_.players) {
+                    if (game_state_.flag.owner.has_value() &&
+                        ps.id == game_state_.flag.owner.value()) {
+                        winner_name = ps.name;
+                        break;
+                    }
+                }
+                if (winner_name.empty())
+                    winner_name = game_state_.flag.owner.value_or("?");
+                phase_text = "GAME OVER — Winner: " + winner_name;
+            } else {
+                phase_text = "POST GAME";
+            }
+            break;
+    }
+    view_->render(phase_text);
+}
+
+auto Server::should_close_observer() -> bool {
+    if (!view_) return false;
+    return view_->should_close();
+}
 
 ServerView::ServerView(const game::GameState& game_state)
     : game_state_(game_state) {}

@@ -1,5 +1,4 @@
 #include "server.hpp"
-#include "server_view.hpp"
 
 #include "json.hpp"
 #include "net/platform.hpp"
@@ -77,12 +76,8 @@ Server::Server(int port, bool headless)
     }
 }
 
-Server::~Server() {
-    sessions_.clear();
-    if (listener_) {
-        poller_.remove_fd(listener_.native_handle());
-    }
-}
+// Destructor is defined in server_view.cpp where ServerView is complete
+// (unique_ptr<ServerView> needs the full type for its destructor).
 
 void Server::stop() {
     running_.store(false);
@@ -96,9 +91,7 @@ void Server::run() {
     if (!listener_) return;
 
     // Create the observer view (skipped in headless mode).
-    if (!headless_) {
-        view_ = std::make_unique<ServerView>(game_state_);
-    }
+    init_observer();
 
     while (true) {
         int ret = poller_.poll(50);  // ~20 Hz
@@ -108,7 +101,7 @@ void Server::run() {
         // 0. Check exit conditions.
         if (headless_) {
             if (!running_.load()) break;
-        } else if (view_ && view_->should_close()) {
+        } else if (should_close_observer()) {
             break;
         }
 
@@ -132,7 +125,12 @@ void Server::run() {
         }
 
         // 3. Phase-specific logic.
-        if (phase_ == Phase::Countdown) {
+        if (phase_ == Phase::Lobby) {
+            // Deferred countdown trigger: start if enough joined players.
+            if (session_count() >= constants::min_players) {
+                start_countdown();
+            }
+        } else if (phase_ == Phase::Countdown) {
             process_countdown();
         } else if (phase_ == Phase::Playing) {
             game_tick();
@@ -144,41 +142,7 @@ void Server::run() {
         cleanup_disconnected();
 
         // 5. Render the observer window.
-        if (view_) {
-            std::string phase_text;
-            switch (phase_) {
-                case Phase::Lobby:
-                    phase_text = "LOBBY";
-                    break;
-                case Phase::Countdown:
-                    phase_text = "COUNTDOWN " + std::to_string(countdown_remaining_);
-                    break;
-                case Phase::Playing:
-                    phase_text = "PLAYING";
-                    break;
-                case Phase::PostGame:
-                    if (game_over_sent_) {
-                        // Find winner name.
-                        std::string winner_name;
-                        for (const auto& ps : game_state_.players) {
-                            if (game_state_.flag.owner.has_value() &&
-                                ps.id == game_state_.flag.owner.value()) {
-                                winner_name = ps.name;
-                                break;
-                            }
-                        }
-                        if (winner_name.empty()) winner_name = game_state_.flag.owner.value_or("?");
-                        phase_text = "GAME OVER — Winner: " + winner_name;
-                    } else {
-                        phase_text = "POST GAME";
-                    }
-                    break;
-            }
-            view_->render(phase_text);
-        }
-
-        // 5. Check for window close (placeholder — Raylib integration later).
-        // In this skeleton we let the user Ctrl-C to stop.
+        render_observer();
     }
 }
 
@@ -188,10 +152,12 @@ void Server::accept_new() {
     if (!poller_.is_readable(listener_.native_handle())) return;
 
     while (auto client = listener_.accept()) {
-        auto fd = client->native_handle();
+        // Release the fd from the TcpSocket so its destructor doesn't
+        // close it — the Session now owns the fd.
+        auto fd = client->release();
         auto session = std::make_unique<Session>(fd);
 
-        poller_.add_fd(fd, true, true);  // want both read and write
+        poller_.add_fd(fd, true, true);  // want read and write
         sessions_[fd] = std::move(session);
     }
 }
@@ -338,10 +304,9 @@ void Server::handle_join(Session& session, const ctf::Join& msg) {
     // Broadcast updated lobby to all.
     broadcast_lobby();
 
-    // Check if we should start countdown.
-    if (session_count() >= constants::min_players) {
-        start_countdown();
-    }
+    // Countdown trigger is deferred to the main loop (after all messages
+    // in this iteration are processed) so that simultaneous joins from
+    // multiple bots all land in the Lobby phase.
 }
 
 void Server::handle_input(Session& session, const ctf::Input& msg) {
@@ -560,6 +525,11 @@ void Server::game_tick() {
     }
 
     double dt = std::chrono::duration<double>(now - last_tick_time_).count();
+
+    // Limit to 20 Hz (50 ms per tick) per SPEC.  The poll loop may return
+    // early when there is I/O activity, so we skip ticks that are too soon.
+    if (dt < 0.05) return;
+
     last_tick_time_ = now;
 
     // Clamp dt to prevent large jumps.

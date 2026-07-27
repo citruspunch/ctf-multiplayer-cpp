@@ -60,6 +60,9 @@ public:
     // Close the socket explicitly.
     void close();
 
+    // Release ownership of the native handle (prevents close on destruct).
+    auto release() -> socket_t;
+
     // Whether the socket is valid (open).
     explicit operator bool() const noexcept;
 

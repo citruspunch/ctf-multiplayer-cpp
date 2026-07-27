@@ -22,6 +22,12 @@ namespace ctf::server {
 // Forward declaration (Raylib-heavy class defined in server_view.hpp).
 class ServerView;
 
+// Custom deleter so unique_ptr<ServerView> can live in server.cpp without
+// the full ServerView definition (pimpl + custom deleter pattern).
+struct ServerViewDeleter {
+    void operator()(ServerView* p) const noexcept;
+};
+
 enum class Phase { Lobby, Countdown, Playing, PostGame };
 
 // ── Session: per-connection state ────────────────────────────────────────
@@ -110,7 +116,7 @@ private:
     std::vector<net::socket_t> pending_disconnects_;
 
     // Optional Raylib observer window.
-    std::unique_ptr<ServerView> view_;
+    std::unique_ptr<ServerView, ServerViewDeleter> view_;
     bool headless_{false};
     std::atomic<bool> running_{true};
 
@@ -153,6 +159,17 @@ private:
     void game_tick();
     void remove_player_from_game(const std::string& player_id);
     void process_post_game();
+
+    // ── Observer view lifecycle ──────────────────────────────────────
+    // Defined in server_view.cpp to keep Raylib symbols out of the
+    // server library (so tests can link without Raylib).
+
+    // Create the observer window (no-op in headless mode).
+    void init_observer();
+    // Render one frame (no-op when headless or no view).
+    void render_observer();
+    // Returns true when the user closed the observer window.
+    auto should_close_observer() -> bool;
 
     // ── Config ───────────────────────────────────────────────────────
 
