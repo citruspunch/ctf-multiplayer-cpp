@@ -21,8 +21,6 @@
 
 #ifdef __APPLE__
 #include <cstdint>
-#include <objc/message.h>
-#include <objc/runtime.h>
 
 // ── Step 1: TransformProcessType ──────────────────────────────────────
 // TransformProcessType lives in ApplicationServices.framework, not the
@@ -57,21 +55,11 @@ inline void activate_macos_app() {
 // ── Step 2: Activate the application (bring windows to front) ─────────
 // Must be called AFTER InitWindow() because NSApp (the shared NSApplication
 // instance) is created by GLFW during InitWindow and does not exist before.
-// Uses the Objective-C runtime directly (no .mm file needed).
+// Implemented in app_activation.mm using real Objective-C syntax so the
+// msgSend ABI is correct on ARM64 (Apple Silicon).
+extern "C" void activate_macos_app_after_init_impl(void);
 inline void activate_macos_app_after_init() {
-    // [NSApp activateIgnoringOtherApps:YES]
-    // Note: objc_getClass returns Class (objc_class*) which is NOT the
-    // same type as id (objc_object*) on the modern runtime, so we need
-    // a double-cast via void* to bypass the type-system check.
-    SEL sharedAppSel = sel_registerName("sharedApplication");
-    id (*sendId)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
-    id app = sendId((id)(void*)objc_getClass("NSApplication"), sharedAppSel);
-    if (app) {
-        SEL activateSel = sel_registerName("activateIgnoringOtherApps:");
-        void (*sendVoid)(id, SEL, BOOL) =
-            (void (*)(id, SEL, BOOL))objc_msgSend;
-        sendVoid(app, activateSel, YES);
-    }
+    activate_macos_app_after_init_impl();
 }
 
 #else
