@@ -70,17 +70,13 @@ void Client::run() {
     activate_macos_app();
 #endif
 #ifdef __APPLE__
-    // On macOS, the GLFW NSWindow has a known issue where it initialises
-    // in a hidden/inactive state and doesn't come to the front when the
-    // process is launched outside LaunchServices.  Requesting the window
-    // to be topmost, resizable, and VSync up-front (BEFORE InitWindow)
-    // makes GLFW create the NSWindow with the correct level AND sync the
-    // buffer swap with the display refresh.  VSync is critical: without
-    // it, the render loop busy-waits and the main thread never yields to
-    // Cocoa's main run loop, so macOS marks the app as "Not Responding"
-    // before the first frame is visible.
-    SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_WINDOW_RESIZABLE |
-                   FLAG_VSYNC_HINT);
+    // On macOS, FLAG_VSYNC_HINT combined with FLAG_WINDOW_TOPMOST has
+    // a known issue in Raylib 6.0 + Apple Silicon where the GL back-
+    // buffer is never presented to the screen, leaving the window
+    // black even though the render loop runs.  Drop VSync here; we
+    // cap the framerate with SetTargetFPS(60) below, which keeps
+    // the main thread responsive via Raylib's internal wait.
+    SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_WINDOW_RESIZABLE);
 #else
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 #endif
@@ -92,10 +88,7 @@ void Client::run() {
     activate_macos_app_after_init();
 #endif
     window_open_ = true;
-    // Use VSync (set via FLAG_VSYNC_HINT above) instead of SetTargetFPS:
-    // SetTargetFPS busy-waits on the main thread, which prevents Cocoa
-    // from processing Apple events and triggers the "Not Responding"
-    // watchdog.  VSync yields the CPU during glfwSwapBuffers.
+    SetTargetFPS(60);
     SetExitKey(0);  // ESC should not kill the app while typing.
 
     start_broadcast_discovery();

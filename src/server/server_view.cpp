@@ -96,12 +96,10 @@ void ServerView::render(const std::string& phase_text) {
         activate_macos_app();
 #endif
 #ifdef __APPLE__
-        // On macOS, FLAG_WINDOW_TOPMOST + FLAG_VSYNC_HINT make GLFW
-        // create the NSWindow with the correct level and sync the swap
-        // with the display.  VSync is critical: without it the render
-        // loop busy-waits and the main thread never yields to Cocoa,
-        // so macOS marks the app as "Not Responding".
-        SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_VSYNC_HINT);
+        // On macOS, FLAG_VSYNC_HINT combined with FLAG_WINDOW_TOPMOST
+        // can leave the window black (known Raylib 6.0 + Apple
+        // Silicon issue).  Drop VSync and use SetTargetFPS below.
+        SetConfigFlags(FLAG_WINDOW_TOPMOST);
 #else
         SetConfigFlags(FLAG_VSYNC_HINT);
 #endif
@@ -110,12 +108,9 @@ void ServerView::render(const std::string& phase_text) {
         // Step 2: bring window to front *after* InitWindow.
         activate_macos_app_after_init();
 #endif
-        // No SetTargetFPS(60) — use VSync (set above) instead so the
-        // main thread yields to Cocoa between frames.
+        SetTargetFPS(60);
         initialised_ = true;
     }
-
-    // (Cocoa main queue pump moved to after EndDrawing, see below.)
 
     BeginDrawing();
     ClearBackground(BLACK);
