@@ -69,7 +69,15 @@ void Server::render_observer() {
             }
             break;
     }
-    view_->render(phase_text);
+
+    // Build lobby player list (for the right-hand panel in the view).
+    std::vector<std::pair<std::string, std::string>> names;
+    for (const auto& [fd, s] : sessions_) {
+        if (s->joined)
+            names.emplace_back(s->player_id, s->player_name);
+    }
+
+    view_->render(phase_text, names, session_count());
 }
 
 auto Server::should_close_observer() -> bool {
@@ -87,6 +95,11 @@ auto Server::should_close_observer() -> bool {
     return false;
 }
 
+auto Server::observer_start_requested() -> bool {
+    if (!view_) return false;
+    return view_->start_requested();
+}
+
 ServerView::ServerView(const game::GameState& game_state)
     : game_state_(game_state) {}
 
@@ -101,7 +114,22 @@ auto ServerView::should_close() -> bool {
     return WindowShouldClose();
 }
 
-void ServerView::render(const std::string& phase_text) {
+auto ServerView::start_requested() -> bool {
+    if (!initialised_) return false;
+    // Edge-detect SPACE keypress — returns true exactly once per press.
+    bool cur = IsKeyDown(KEY_SPACE);
+    bool pressed = cur && !last_space_state_;
+    last_space_state_ = cur;
+    if (pressed) {
+        start_pressed_ = true;
+        return true;
+    }
+    return false;
+}
+
+void ServerView::render(const std::string& phase_text,
+                        const std::vector<std::pair<std::string, std::string>>& lobby_names,
+                        int lobby_count) {
     if (!initialised_) {
 #ifdef __APPLE__
         activate_macos_app();
@@ -137,14 +165,12 @@ void ServerView::render(const std::string& phase_text) {
     int fy = static_cast<int>(game_state_.flag.y * scale);
 
     if (game_state_.flag.owner.has_value()) {
-        // Red triangle pointing up — owned by someone.
         DrawTriangle(
             Vector2{static_cast<float>(fx), static_cast<float>(fy - 10)},
             Vector2{static_cast<float>(fx - 8), static_cast<float>(fy + 6)},
             Vector2{static_cast<float>(fx + 8), static_cast<float>(fy + 6)},
             RED);
     } else {
-        // White triangle — free.
         DrawTriangle(
             Vector2{static_cast<float>(fx), static_cast<float>(fy - 10)},
             Vector2{static_cast<float>(fx - 8), static_cast<float>(fy + 6)},
@@ -158,7 +184,6 @@ void ServerView::render(const std::string& phase_text) {
         int py = static_cast<int>(ps.y * scale);
         int pr = static_cast<int>(constants::player_radius * scale);
 
-        // Choose colour: red if carrier, blue otherwise.
         Color col = BLUE;
         if (game_state_.flag.owner.has_value() &&
             game_state_.flag.owner.value() == ps.id) {
@@ -167,7 +192,6 @@ void ServerView::render(const std::string& phase_text) {
 
         DrawCircle(px, py, static_cast<float>(pr), col);
 
-        // Draw player name above the circle.
         int text_w = MeasureText(ps.name.c_str(), 10);
         DrawText(ps.name.c_str(),
                  px - text_w / 2, py - pr - 14,
@@ -179,6 +203,38 @@ void ServerView::render(const std::string& phase_text) {
     DrawText(phase_text.c_str(),
              (WINDOW_W - text_w) / 2, 10,
              20, YELLOW);
+
+    // ── Lobby panel: connected players (only during LOBBY) ───────────
+    if (!lobby_names.empty()) {
+        // Semi-transparent dark panel on the right side.
+        constexpr float PX = 580, PY = 40, PW = 200, PH = 280;
+        DrawRectangle(PX, PY, PW, PH, Color{10, 12, 18, 220});
+        DrawRectangleLines(PX, PY, PW, PH, GRAY);
+        DrawText("LOBBY", PX + 8, PY + 6, 16, YELLOW);
+        std::string cnt = std::to_string(lobby_count) + " players";
+        DrawText(cnt.c_str(), PX + 8, PY + 26, 13, LIGHTGRAY);
+
+        // Player table.
+        constexpr float RY0 = PY + 50;
+        constexpr float RH  = 16;
+        int row = 0;
+        for (const auto& [id, name] : lobby_names) {
+            if (row >= 12) break;  // max 12 visible rows
+            float ry = RY0 + row * RH;
+            DrawText(id.c_str(), PX + 8, ry, 12, SKYBLUE);
+            DrawText(name.c_str(), PX + 70, ry, 12, WHITE);
+            ++row;
+        }
+
+        // Hint: press SPACE to start.
+        if (lobby_count >= 2) {
+            DrawText("Press SPACE", PX + 8, PY + PH - 24, 13, GREEN);
+            DrawText("to start game", PX + 8, PY + PH - 12, 13, GREEN);
+        } else {
+            DrawText("Waiting for", PX + 8, PY + PH - 24, 13, GRAY);
+            DrawText("2+ players...", PX + 8, PY + PH - 12, 13, GRAY);
+        }
+    }
 
     // ── Apple Silicon: GL → Metal bridge pipeline ──────────────────
     // Same strategy as the client (see client.cpp for full rationale):

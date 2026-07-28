@@ -21,5 +21,6 @@ void ServerViewDeleter::operator()(ServerView*) const noexcept {
 void Server::init_observer() {}
 void Server::render_observer() {}
 auto Server::should_close_observer() -> bool { return false; }
+auto Server::observer_start_requested() -> bool { return false; }
 
 }  // namespace ctf::server

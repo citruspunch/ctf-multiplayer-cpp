@@ -143,7 +143,19 @@ void Server::run() {
 
         // 3. Phase-specific logic.
         if (phase_ == Phase::Lobby) {
-            if (session_count() >= constants::min_players) {
+            // Start condition:
+            //   headless mode -> auto-start when min_players reached (tests)
+            //   observer mode -> manual start via SPACE key in the view
+            bool should_start = false;
+            if (headless_) {
+                should_start = (session_count() >= constants::min_players);
+            } else {
+                should_start = observer_start_requested()
+                               && (session_count() >= constants::min_players);
+            }
+            if (should_start) {
+                std::cout << "[server] Starting game with "
+                          << session_count() << " players\n";
                 start_countdown();
             }
         } else if (phase_ == Phase::Countdown) {
@@ -361,6 +373,16 @@ void Server::send_to(Session& session, const std::string& msg) {
 }
 
 void Server::send_error(Session& session, const std::string& reason, bool close_conn) {
+    std::cerr << "[server] ERROR → " << (session.joined ? session.player_id : "?")
+              << " reason=" << reason << " phase=";
+    switch (phase_) {
+        case Phase::Lobby:      std::cerr << "LOBBY"; break;
+        case Phase::Countdown:  std::cerr << "COUNTDOWN"; break;
+        case Phase::Playing:    std::cerr << "PLAYING"; break;
+        case Phase::PostGame:   std::cerr << "POST_GAME"; break;
+    }
+    std::cerr << " close=" << close_conn << "\n";
+
     ctf::Error err{reason};
     auto json = msg::to_json(err);
     send_to(session, framing::encode(json));

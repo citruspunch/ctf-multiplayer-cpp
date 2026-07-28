@@ -185,6 +185,9 @@ private:
     void render_observer();
     // Returns true when the user closed the observer window.
     auto should_close_observer() -> bool;
+    // Returns true once when the server operator presses SPACE to
+    // manually start the game.
+    auto observer_start_requested() -> bool;
 
     // ── Config ───────────────────────────────────────────────────────
 

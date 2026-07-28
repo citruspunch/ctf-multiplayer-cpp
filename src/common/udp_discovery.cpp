@@ -141,6 +141,17 @@ void DiscoveryClient::discover(int port, int timeout_ms) {
         char ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &sender.sin_addr, ip_str, sizeof(ip_str));
 
+        // Deduplicate by IP:port — dual broadcast may elicit two
+        // responses from the same server.
+        bool duplicate = false;
+        for (const auto& existing : servers_) {
+            if (existing.ip == ip_str && existing.tcp_port == info->tcp_port) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
+
         ServerEntry entry;
         entry.ip       = ip_str;
         entry.name     = info->name;
