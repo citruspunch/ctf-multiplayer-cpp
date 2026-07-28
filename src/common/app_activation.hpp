@@ -74,8 +74,30 @@ inline void pump_cocoa_main_queue() {
     pump_cocoa_main_queue_impl();
 }
 
+// ── Step 4: Install a real Cocoa menu bar (Quit, Cmd+Q) ──────────────
+// Raylib drives its own event loop with glfwPollEvents, so Cocoa never
+// installs the default application menu — meaning Cmd+Q has nothing to
+// dispatch to and the app can't be quit through normal macOS channels.
+// This installs a minimal menu bar with a Quit item (Cmd+Q) whose action
+// sets a thread-safe quit flag the render loop polls each frame.  Safe
+// to call once after `activate_macos_app_after_init()`.
+extern "C" void install_macos_menu_impl(void);
+inline void install_macos_menu() { install_macos_menu_impl(); }
+
+// Returns true once after the user picks Quit from the menu or hits
+// Cmd+Q.  Resets on `clear_macos_quit_request()` so a single request
+// fires only once even if checked from multiple sites.
+extern "C" bool macos_quit_requested_impl(void);
+inline bool macos_quit_requested() { return macos_quit_requested_impl(); }
+
+extern "C" void clear_macos_quit_request_impl(void);
+inline void clear_macos_quit_request() { clear_macos_quit_request_impl(); }
+
 #else
 inline void activate_macos_app() {}
 inline void activate_macos_app_after_init() {}
 inline void pump_cocoa_main_queue() {}
+inline void install_macos_menu() {}
+inline bool macos_quit_requested() { return false; }
+inline void clear_macos_quit_request() {}
 #endif

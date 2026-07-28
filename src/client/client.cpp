@@ -70,13 +70,16 @@ void Client::run() {
     activate_macos_app();
 #endif
 #ifdef __APPLE__
-    // On macOS, FLAG_VSYNC_HINT combined with FLAG_WINDOW_TOPMOST has
-    // a known issue in Raylib 6.0 + Apple Silicon where the GL back-
-    // buffer is never presented to the screen, leaving the window
-    // black even though the render loop runs.  Drop VSync here; we
-    // cap the framerate with SetTargetFPS(60) below, which keeps
-    // the main thread responsive via Raylib's internal wait.
-    SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_WINDOW_RESIZABLE);
+    // macOS / Apple Silicon + Raylib 6.0 has a chronic issue where
+    // FLAG_WINDOW_TOPMOST (and the VSync+TOPMOST combo) leaves the GL
+    // backbuffer in a state where it is never presented to the screen
+    // — the window shows a solid black background even though the
+    // render loop runs and OpenGL commands execute normally.  Drop
+    // TOPMOST entirely on macOS.  We also drop VSync and rely on
+    // SetTargetFPS(60) below for framerate limiting; the main thread
+    // stays responsive via Raylib's internal wait inside the
+    // `while (!WindowShouldClose())` loop.
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 #else
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 #endif
@@ -86,14 +89,48 @@ void Client::run() {
     // brings the window to front.  Without this the NSWindow is created
     // but never ordered forward.
     activate_macos_app_after_init();
+
+    // Step 3: install a real menu bar with Quit (Cmd+Q).  Without a
+    // menu bar, Raylib's tight glfwPollEvents loop never lets Cocoa
+    // install one — and Cmd+Q has nothing to dispatch to, leaving the
+    // app unkillable through normal channels.
+    install_macos_menu();
+    clear_macos_quit_request();
+
+    // Step 4: warmup frame.  On Apple Silicon, the first EndDrawing
+    // can paint into an unrealised backbuffer that the windowserver
+    // never presents.  Triggering a full Begin/End cycle here, then
+    // pumping the Cocoa run loop, forces the GL context to fully
+    // initialise before the main loop starts.  Belt-and-suspenders:
+    // ClearBackground with the real background colour doubles as a
+    // sanity check that the swap actually reaches the screen.
+    BeginDrawing();
+    ClearBackground(BG_COLOR);
+    EndDrawing();
+    pump_cocoa_main_queue();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    pump_cocoa_main_queue();
 #endif
     window_open_ = true;
     SetTargetFPS(60);
-    SetExitKey(0);  // ESC should not kill the app while typing.
+    SetExitKey(0);  // Raylib's default ESC-quit is disabled — we
+                    // handle Cmd+Q via the menu and the close button
+                    // via WindowShouldClose() below.  ESC is still
+                    // used to dismiss menus (handled in update_*()).
 
     start_broadcast_discovery();
 
     while (!WindowShouldClose()) {
+#ifdef __APPLE__
+        // Check the macOS menu's Quit (Cmd+Q) request and break out
+        // of the render loop cleanly so destructors and CloseWindow()
+        // run.  macos_quit_requested() is set by the NSMenuItem
+        // action installed in app_activation.mm.
+        if (macos_quit_requested()) {
+            window_open_ = false;
+            break;
+        }
+#endif
         update();
         BeginDrawing();
         ClearBackground(BG_COLOR);
@@ -103,9 +140,10 @@ void Client::run() {
         // Drain Cocoa's main run loop AFTER the frame is presented
         // (not before) so the GL swap is not disturbed.  GLFW's
         // glfwPollEvents only handles GLFW events; this pumps Apple
-        // events (Cmd+Tab, Dock clicks) so the "Not Responding" badge
-        // clears.  Must come after EndDrawing so the GL backbuffer
-        // swap is committed before the main run loop is drained.
+        // events (Cmd+Tab, Dock clicks, Cmd+Q via the menu) so the
+        // "Not Responding" badge clears and the menu's action fires.
+        // Must come after EndDrawing so the GL backbuffer swap is
+        // committed before the main run loop is drained.
         pump_cocoa_main_queue();
 #endif
     }
@@ -115,6 +153,18 @@ void Client::update() {
     if (socket_) {
         poll_network();
         flush_send();
+    }
+
+    // Global ESC-to-quit: only when no text field is focused, so it
+    // doesn't fire while the user is typing a server IP, a name, etc.
+    // Cmd+Q is the primary macOS quit path (handled in run()); this is
+    // a cross-platform fallback that also works on Linux/Windows.
+    const bool any_text_focused = manual_ip_.focused ||
+                                  direct_addr_.focused ||
+                                  name_field_.focused;
+    if (!any_text_focused && IsKeyPressed(KEY_ESCAPE)) {
+        window_open_ = false;
+        return;
     }
 
     switch (state_) {

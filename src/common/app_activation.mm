@@ -72,4 +72,82 @@ extern "C" void pump_cocoa_main_queue_impl(void) {
         [NSApp sendEvent:event];
     }
 }
+
+// ── Menu bar + Quit handler ─────────────────────────────────────────────
+//
+// Raylib's render loop never calls [NSApp run], so Cocoa never installs
+// the default application menu bar.  Without one, the user has no
+// visible "Quit" item and Cmd+Q has nothing to dispatch to — the app
+// becomes unkillable from the menu and must be force-quit.  Installing
+// a real menu bar (even minimal) fixes both: the menu item is visible
+// in the menu bar, Cmd+Q matches its key equivalent, and the action
+// callback is invoked by AppKit when the user triggers it (because
+// sendEvent: dispatches menu key equivalents through the responder
+// chain).
+//
+// We install a single-item menu bar:
+//   ▸ [App Name] ▸ Quit [App Name]   (⌘Q)
+//
+// The Quit action sets a std::atomic<bool> that the C++ render loop
+// polls each frame, so the loop can break cleanly and call CloseWindow()
+// (which runs the Raylib destructors) instead of exit(0).
+
+#import <atomic>
+
+static std::atomic<bool> g_quit_requested{false};
+
+@interface CTFQuitHandler : NSObject
++ (void)requestQuit:(id)sender;
+@end
+
+@implementation CTFQuitHandler
++ (void)requestQuit:(id)sender {
+    (void)sender;
+    g_quit_requested.store(true);
+}
+@end
+
+extern "C" void install_macos_menu_impl(void) {
+    if (NSApp == nil) return;
+
+    // If a menu bar is already installed (e.g. by a previous call),
+    // tear it down so we don't accumulate duplicates on re-init.
+    if ([NSApp mainMenu] != nil) {
+        [NSApp setMainMenu:nil];
+    }
+
+    NSString* appName = [[NSProcessInfo processInfo] processName];
+    if (appName == nil || appName.length == 0) {
+        appName = @"CTF";
+    }
+
+    // Build the menu bar.
+    NSMenu* menubar = [[NSMenu alloc] init];
+
+    // Application menu (the bold one with the process name).
+    NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
+    NSMenu* appMenu = [[NSMenu alloc] init];
+
+    // Quit item — Cmd+Q.
+    NSString* quitTitle = [@"Quit " stringByAppendingString:appName];
+    NSMenuItem* quitItem = [[NSMenuItem alloc] initWithTitle:quitTitle
+                                                      action:@selector(requestQuit:)
+                                               keyEquivalent:@"q"];
+    [quitItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+    [quitItem setTarget:[CTFQuitHandler class]];
+    [appMenu addItem:quitItem];
+
+    [appMenuItem setSubmenu:appMenu];
+    [menubar addItem:appMenuItem];
+
+    [NSApp setMainMenu:menubar];
+}
+
+extern "C" bool macos_quit_requested_impl(void) {
+    return g_quit_requested.load();
+}
+
+extern "C" void clear_macos_quit_request_impl(void) {
+    g_quit_requested.store(false);
+}
 #endif

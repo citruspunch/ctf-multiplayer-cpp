@@ -8,7 +8,9 @@
 
 #include <raylib.h>
 
+#include <chrono>
 #include <string>
+#include <thread>
 
 namespace ctf::server {
 
@@ -72,7 +74,17 @@ void Server::render_observer() {
 
 auto Server::should_close_observer() -> bool {
     if (!view_) return false;
-    return view_->should_close();
+    if (view_->should_close()) return true;
+#ifdef __APPLE__
+    // macOS Quit (Cmd+Q) is delivered to the NSMenuItem installed in
+    // app_activation.mm.  The action sets an atomic flag; check it
+    // here so the server loop can break cleanly and run its
+    // destructors (including CloseWindow) instead of exit(0).
+    if (macos_quit_requested()) {
+        return true;
+    }
+#endif
+    return false;
 }
 
 ServerView::ServerView(const game::GameState& game_state)
@@ -96,10 +108,16 @@ void ServerView::render(const std::string& phase_text) {
         activate_macos_app();
 #endif
 #ifdef __APPLE__
-        // On macOS, FLAG_VSYNC_HINT combined with FLAG_WINDOW_TOPMOST
-        // can leave the window black (known Raylib 6.0 + Apple
-        // Silicon issue).  Drop VSync and use SetTargetFPS below.
-        SetConfigFlags(FLAG_WINDOW_TOPMOST);
+        // macOS / Apple Silicon + Raylib 6.0 has a chronic issue where
+        // FLAG_WINDOW_TOPMOST (and the VSync+TOPMOST combo) leaves the
+        // GL backbuffer in a state where it is never presented to the
+        // screen — the window shows a solid black background even
+        // though the render loop runs and OpenGL commands execute.
+        // Drop TOPMOST entirely on macOS.  We also drop VSync and rely
+        // on SetTargetFPS(60) below for framerate limiting; the main
+        // thread stays responsive via Raylib's internal wait inside
+        // the server's poll loop.
+        SetConfigFlags(0);
 #else
         SetConfigFlags(FLAG_VSYNC_HINT);
 #endif
@@ -107,8 +125,28 @@ void ServerView::render(const std::string& phase_text) {
 #ifdef __APPLE__
         // Step 2: bring window to front *after* InitWindow.
         activate_macos_app_after_init();
+
+        // Step 3: install a real menu bar with Quit (Cmd+Q).  Without
+        // a menu bar, Cmd+Q has nothing to dispatch to in the
+        // server's tight glfwPollEvents loop.
+        install_macos_menu();
+        clear_macos_quit_request();
+
+        // Step 4: warmup frame.  On Apple Silicon, the first
+        // EndDrawing can paint into an unrealised backbuffer that the
+        // windowserver never presents.  Triggering a full Begin/End
+        // cycle here, then pumping the Cocoa run loop, forces the GL
+        // context to fully initialise before the main loop starts.
+        BeginDrawing();
+        ClearBackground(BLACK);
+        EndDrawing();
+        pump_cocoa_main_queue();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        pump_cocoa_main_queue();
 #endif
         SetTargetFPS(60);
+        SetExitKey(0);  // ESC handled by the caller (Server::run
+                        // checks WindowShouldClose()).
         initialised_ = true;
     }
 
