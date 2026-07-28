@@ -45,6 +45,35 @@ cmake --build --preset=release
 
 ## Usage
 
+### macOS (requires app bundle)
+
+On macOS, command-line binaries cannot display GUI windows directly. The build
+automatically creates a `.app` bundle at `build/ctf.app`. Use the provided
+launch scripts:
+
+```bash
+# Server (default TCP port 8889, UDP discovery port 8888)
+./run-server.sh
+
+# Server on a specific port
+./run-server.sh 9000
+
+# Client (discovery menu + game)
+./run-client.sh
+```
+
+Or use `open` directly:
+
+```bash
+# Server
+open -n build/ctf.app --args --server
+
+# Client (in a different terminal)
+open -n build/ctf.app --args --client
+```
+
+### Linux / Windows
+
 ```bash
 # Server (default TCP port 8889, UDP discovery port 8888)
 ./build/ctf --server

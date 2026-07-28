@@ -16,3 +16,10 @@ target_link_libraries(common PUBLIC nlohmann_json::nlohmann_json)
 if(APPLE OR UNIX)
     target_link_libraries(common PRIVATE pthread)
 endif()
+
+# TransformProcessType / GetCurrentProcess (used by app_activation.hpp on
+# macOS to promote a terminal-launched binary to a foreground GUI app)
+# live in ApplicationServices.framework, not in the Cocoa umbrella.
+if(APPLE)
+    target_link_libraries(common PUBLIC "-framework ApplicationServices")
+endif()

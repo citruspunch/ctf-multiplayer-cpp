@@ -2,6 +2,10 @@
 #include "server.hpp"
 #include "constants.hpp"
 
+#ifdef __APPLE__
+#include "app_activation.hpp"
+#endif
+
 #include <raylib.h>
 
 #include <string>
@@ -87,7 +91,20 @@ auto ServerView::should_close() -> bool {
 
 void ServerView::render(const std::string& phase_text) {
     if (!initialised_) {
+#ifdef __APPLE__
+        // Promote this process to a foreground GUI app *before* creating
+        // the NSWindow.  No-op on non-Apple and harmless when launched
+        // via `open ctf.app`.
+        activate_macos_app();
+#endif
         InitWindow(WINDOW_W, WINDOW_H, "CTF Server — Observer");
+        SetTargetFPS(60);
+        // Ensure visible and centered.
+        ClearWindowState(FLAG_WINDOW_HIDDEN);
+        RestoreWindow();
+        int mw = GetMonitorWidth(0);
+        int mh = GetMonitorHeight(0);
+        SetWindowPosition((mw - WINDOW_W) / 2, (mh - WINDOW_H) / 2);
         initialised_ = true;
     }
 

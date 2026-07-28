@@ -14,13 +14,21 @@ find_package(Catch2 CONFIG REQUIRED)
 # Main executable
 # Raylib UI sources are compiled directly into the executable (not the
 # static libraries) so Raylib/GLFW symbols resolve at link time on macOS.
-add_executable(ctf
+add_executable(ctf MACOSX_BUNDLE
     src/main.cpp
     src/server/server_view.cpp
     src/client/client.cpp
     src/client/input.cpp
     src/client/game_view.cpp
 )
+
+# Configure Info.plist file natively if needed
+if(APPLE)
+    set_target_properties(ctf PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/Info.plist"
+    )
+endif()
+
 
 # Subdirectories
 add_subdirectory(src/common)
