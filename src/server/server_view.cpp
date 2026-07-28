@@ -115,11 +115,8 @@ void ServerView::render(const std::string& phase_text) {
         initialised_ = true;
     }
 
-#ifdef __APPLE__
-    // Drain Cocoa's main run loop so the process is seen as
-    // responsive and the "Not Responding" Dock badge clears.
-    pump_cocoa_main_queue();
-#endif
+    // (Cocoa main queue pump moved to after EndDrawing, see below.)
+
     BeginDrawing();
     ClearBackground(BLACK);
 
@@ -180,6 +177,12 @@ void ServerView::render(const std::string& phase_text) {
              20, YELLOW);
 
     EndDrawing();
+#ifdef __APPLE__
+    // Drain Cocoa's main run loop AFTER the frame is presented so the
+    // GL swap is not disturbed.  Must come after EndDrawing so the
+    // GL backbuffer swap is committed before the main run loop runs.
+    pump_cocoa_main_queue();
+#endif
 }
 
 }  // namespace ctf::server

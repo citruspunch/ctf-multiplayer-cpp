@@ -101,19 +101,20 @@ void Client::run() {
     start_broadcast_discovery();
 
     while (!WindowShouldClose()) {
-#ifdef __APPLE__
-        // Drain Cocoa's main run loop so macOS sees the process as
-        // responsive and clears the "Not Responding" Dock badge.
-        // GLFW's glfwPollEvents (called by EndDrawing) only handles
-        // GLFW events; this is what actually processes Apple events
-        // (Cmd+Tab, Dock clicks, etc.).
-        pump_cocoa_main_queue();
-#endif
         update();
         BeginDrawing();
         ClearBackground(BG_COLOR);
         draw();
         EndDrawing();
+#ifdef __APPLE__
+        // Drain Cocoa's main run loop AFTER the frame is presented
+        // (not before) so the GL swap is not disturbed.  GLFW's
+        // glfwPollEvents only handles GLFW events; this pumps Apple
+        // events (Cmd+Tab, Dock clicks) so the "Not Responding" badge
+        // clears.  Must come after EndDrawing so the GL backbuffer
+        // swap is committed before the main run loop is drained.
+        pump_cocoa_main_queue();
+#endif
     }
 }
 
