@@ -50,4 +50,26 @@ extern "C" void activate_macos_app_after_init_impl(void) {
         [window makeKeyAndOrderFront:nil];
     }
 }
+
+// Pump pending NSEvents from Cocoa's main queue so macOS sees the
+// process as responsive (clears the "Application Not Responding"
+// badge in the Dock).  GLFW's glfwPollEvents only drains GLFW's own
+// event queue; it does NOT drain the Cocoa main run loop, so without
+// this the watchdog can time out during heavy first-frame work
+// (shader compilation, font loading, etc.) and the badge stays stuck.
+extern "C" void pump_cocoa_main_queue_impl(void) {
+    NSEvent* event = nil;
+    // Drain up to 20 events per call so we never starve the render
+    // loop.  Using NSDefaultRunLoopMode means the event goes through
+    // the normal AppKit handling (NSWindow mouse-tracking, Cmd+Tab,
+    // Dock clicks, etc.).
+    for (int i = 0; i < 20; ++i) {
+        event = [NSApp nextEventMatchingMask:NSAnyEventMask
+                                   untilDate:[NSDate distantPast]
+                                      inMode:NSDefaultRunLoopMode
+                                     dequeue:YES];
+        if (event == nil) break;
+        [NSApp sendEvent:event];
+    }
+}
 #endif

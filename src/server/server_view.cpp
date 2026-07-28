@@ -115,6 +115,11 @@ void ServerView::render(const std::string& phase_text) {
         initialised_ = true;
     }
 
+#ifdef __APPLE__
+    // Drain Cocoa's main run loop so the process is seen as
+    // responsive and the "Not Responding" Dock badge clears.
+    pump_cocoa_main_queue();
+#endif
     BeginDrawing();
     ClearBackground(BLACK);
 

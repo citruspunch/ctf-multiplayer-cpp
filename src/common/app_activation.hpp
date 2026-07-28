@@ -62,7 +62,20 @@ inline void activate_macos_app_after_init() {
     activate_macos_app_after_init_impl();
 }
 
+// ── Step 3: Pump Cocoa's main queue (keep the process responsive) ─────
+// macOS marks an app as "Application Not Responding" in the Dock if it
+// does not respond to an Apple event (Cmd+Tab, Dock click, etc.) within
+// ~5 s.  GLFW's glfwPollEvents only drains GLFW's own event queue — it
+// does NOT touch Cocoa's main run loop.  Calling this once per frame
+// from the render loop drains the Cocoa main queue so the watchdog
+// sees the process as alive and clears the "Not Responding" badge.
+extern "C" void pump_cocoa_main_queue_impl(void);
+inline void pump_cocoa_main_queue() {
+    pump_cocoa_main_queue_impl();
+}
+
 #else
 inline void activate_macos_app() {}
 inline void activate_macos_app_after_init() {}
+inline void pump_cocoa_main_queue() {}
 #endif
