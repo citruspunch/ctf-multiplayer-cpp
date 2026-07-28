@@ -69,6 +69,19 @@ void Client::run() {
     // launched via `open ctf.app`.
     activate_macos_app();
 #endif
+#ifdef __APPLE__
+    // On macOS, the GLFW NSWindow has a known issue where it initialises
+    // in a hidden/inactive state and doesn't come to the front when the
+    // process is launched outside LaunchServices.  Requesting the window
+    // to be topmost and resizable up-front (BEFORE InitWindow) makes
+    // GLFW create the NSWindow with the correct level and order it to
+    // the front automatically.  Without this, the window may render
+    // fine but stay behind other windows or be marked "Not Responding"
+    // by the system because it never responds to activation events.
+    SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_WINDOW_RESIZABLE);
+#else
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+#endif
     InitWindow(WINDOW_W, WINDOW_H, "CTF — Client");
 #ifdef __APPLE__
     // Step 2: [NSApp activateIgnoringOtherApps:YES] *after* InitWindow

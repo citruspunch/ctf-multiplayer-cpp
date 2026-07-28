@@ -95,6 +95,13 @@ void ServerView::render(const std::string& phase_text) {
         // Step 1: promote process to foreground *before* InitWindow.
         activate_macos_app();
 #endif
+#ifdef __APPLE__
+        // On macOS, FLAG_WINDOW_TOPMOST makes GLFW create the NSWindow
+        // with the correct level so it is ordered to the front when the
+        // process is launched outside LaunchServices.  Without this the
+        // window may render fine but stay behind other windows.
+        SetConfigFlags(FLAG_WINDOW_TOPMOST);
+#endif
         InitWindow(WINDOW_W, WINDOW_H, "CTF Server — Observer");
 #ifdef __APPLE__
         // Step 2: bring window to front *after* InitWindow.
