@@ -7,6 +7,7 @@
 #ifdef __APPLE__
 #include "app_activation.hpp"
 #include <OpenGL/OpenGL.h>
+#include <OpenGL/gl3.h>
 #endif
 
 #include <raylib.h>
@@ -108,30 +109,44 @@ void Client::run() {
         ClearBackground(BG_COLOR);
         draw();
 
-        // ── Apple Silicon: flush GL → Metal bridge BEFORE swap ────
-        // On Apple Silicon, OpenGL commands go through a Metal
-        // translation layer.  Raylib's rlDrawRenderBatchActive()
-        // (inside EndDrawing) pushes draw calls to the GL pipeline,
-        // but they are buffered in a Metal command buffer that
-        // hasn't been committed yet.  If we let EndDrawing swap
-        // immediately, CGLFlushDrawable presents a stale/empty
-        // backbuffer — hence the black window.
+        // ── Apple Silicon: GL → Metal bridge pipeline ────────────
+        // OpenGL on Apple Silicon translates to Metal.  The
+        // pipeline operates in two distinct phases:
         //
-        // Calling CGLFlushDrawable HERE (before EndDrawing) forces
-        // the Metal bridge to commit its command buffer to the GL
-        // backbuffer.  Then EndDrawing's own CGLFlushDrawable
-        // (via glfwSwapBuffers) presents the now-filled buffer.
-        // The second CGLFlushDrawable is a cheap no-op (~µs).
+        //   PHASE A — Immediate GL commands:
+        //     ClearBackground() → glClear() — goes straight to
+        //     OpenGL, buffered in a Metal command buffer.
+        //
+        //   PHASE B — Batched draw calls:
+        //     DrawText(), DrawRectangle(), etc. are queued in
+        //     Raylib's vertex batch (RAM), NOT sent to GL yet.
+        //     They are flushed to GL inside EndDrawing() via
+        //     rlDrawRenderBatchActive().
+        //
+        // Strategy:
+        //   1. glFlush() — commits PHASE-A's Metal buffer so
+        //      the clear is ready, but does NOT present.
+        //   2. EndDrawing() — sends PHASE-B vertices to GL
+        //      (new Metal buffer), then SwapBuffers presents.
+        //   3. CGLFlushDrawable AFTER EndDrawing — belt-and-
+        //      suspenders: if the swap inside EndDrawing
+        //      silently no-ops, this guarantees presentation
+        //      of the fully-rendered frame.
+        //
+        // ⚠ Do NOT call CGLFlushDrawable BEFORE EndDrawing —
+        //    it PRESENTS the drawable, so EndDrawing's swap
+        //    becomes a no-op and PHASE-B draws are lost.
 #ifdef __APPLE__
+        glFlush();  // commit Metal buffer, DON'T present
+#endif
+        EndDrawing();
+
+#ifdef __APPLE__
+        // Belt-and-suspenders: guarantee the frame is presented.
         {
             CGLContextObj ctx = CGLGetCurrentContext();
             if (ctx) CGLFlushDrawable(ctx);
         }
-#endif
-
-        EndDrawing();
-
-#ifdef __APPLE__
         // Drain Cocoa's main queue so Cmd+Q dispatches and the
         // Dock doesn't show "Not Responding".
         pump_cocoa_main_queue();
