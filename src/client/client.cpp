@@ -64,18 +64,18 @@ Client::~Client() {
 
 void Client::run() {
 #ifdef __APPLE__
-    // Promote this process to a foreground GUI app *before* creating the
-    // NSWindow.  No-op on non-Apple platforms and harmless when already
+    // Step 1: promote process to foreground *before* InitWindow (needed
+    // for WindowServer access).  No-op on non-Apple and harmless when
     // launched via `open ctf.app`.
     activate_macos_app();
 #endif
     InitWindow(WINDOW_W, WINDOW_H, "CTF — Client");
-    // Ensure the window is visible and centered (macOS may hide it).
-    ClearWindowState(FLAG_WINDOW_HIDDEN);
-    RestoreWindow();
-    int mw = GetMonitorWidth(0);
-    int mh = GetMonitorHeight(0);
-    SetWindowPosition((mw - WINDOW_W) / 2, (mh - WINDOW_H) / 2);
+#ifdef __APPLE__
+    // Step 2: [NSApp activateIgnoringOtherApps:YES] *after* InitWindow
+    // brings the window to front.  Without this the NSWindow is created
+    // but never ordered forward.
+    activate_macos_app_after_init();
+#endif
     window_open_ = true;
     SetTargetFPS(60);
     SetExitKey(0);  // ESC should not kill the app while typing.
