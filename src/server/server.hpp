@@ -5,6 +5,7 @@
 #include "messages.hpp"
 #include "net/poller.hpp"
 #include "net/tcp_socket.hpp"
+#include "udp_discovery.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -58,7 +59,7 @@ public:
 
 // ── Server: authoritative game server ────────────────────────────────────
 
-class Server {
+class Server : public discovery::ServerStateProvider {
 public:
     // `headless` skips the Raylib observer window — used by integration
     // tests so the server can run in a background thread without a GUI.
@@ -81,11 +82,25 @@ public:
     // The TCP port the listener is bound to (0 if listen failed).
     auto port() const -> int;
 
+    // ── ServerStateProvider interface ────────────────────────────────
+    auto get_server_name() const -> std::string override { return server_name_; }
+    auto get_tcp_port() const -> int override { return port(); }
+    auto get_state() const -> std::string override {
+        return (phase_ == Phase::Lobby) ? "lobby" : "playing";
+    }
+    auto get_player_count() const -> int override { return session_count(); }
+
 private:
     net::TcpSocket listener_;
     net::Poller poller_;
     std::map<net::socket_t, std::unique_ptr<Session>> sessions_;
     Phase phase_{Phase::Lobby};
+
+    // Server name for discovery responses.
+    std::string server_name_;
+
+    // UDP discovery server (port 8888).
+    std::unique_ptr<discovery::DiscoveryServer> discovery_;
 
     // Player ID counter.
     int next_player_id_{1};

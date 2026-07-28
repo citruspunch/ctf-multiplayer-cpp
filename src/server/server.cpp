@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iostream>
 
 namespace ctf::server {
 
@@ -67,13 +68,28 @@ auto Session::try_send() -> bool {
 // ── Server ───────────────────────────────────────────────────────────────
 
 Server::Server(int port, bool headless)
-    : headless_(headless) {
+    : headless_(headless),
+      server_name_("CTF Server") {
     listener_ = net::TcpSocket::listen(port);
-    // If listen failed, listener_ will be invalid — run() will return
-    // immediately.
     if (listener_) {
         poller_.add_fd(listener_.native_handle(), true, false);
     }
+
+    // ── UDP discovery on port 8888 ───────────────────────────────────
+    // Bind a UDP socket with SO_REUSEADDR + SO_REUSEPORT for local
+    // multi-process testing, then create the DiscoveryServer that
+    // answers `discover` queries with `server_info`.
+    auto udp_sock = net::UdpSocket::bind(constants::discovery_port);
+    if (udp_sock.native_handle() != net::invalid_socket) {
+        discovery_ = std::make_unique<discovery::DiscoveryServer>(
+            std::move(udp_sock), *this);
+        std::cout << "[server] UDP discovery listening on port "
+                  << constants::discovery_port << "\n";
+    } else {
+        std::cerr << "[server] WARNING: failed to bind UDP discovery port "
+                  << constants::discovery_port << " (port in use?)\n";
+    }
+    std::cout << "[server] TCP listening on port " << port << "\n";
 }
 
 // Destructor is defined in server_view.cpp where ServerView is complete
@@ -94,6 +110,9 @@ void Server::run() {
     init_observer();
 
     while (true) {
+        // ── UDP discovery tick ──────────────────────────────────────
+        if (discovery_) discovery_->tick();
+
         int ret = poller_.poll(50);  // ~20 Hz
 
         if (ret < 0) continue;  // poll error, retry
@@ -107,8 +126,6 @@ void Server::run() {
 
         // 1. Accept new connections.
         accept_new();
-
-        // 2. Process readable sessions.
 
         // 2. Process readable sessions.
         for (auto it = sessions_.begin(); it != sessions_.end();) {
@@ -126,7 +143,6 @@ void Server::run() {
 
         // 3. Phase-specific logic.
         if (phase_ == Phase::Lobby) {
-            // Deferred countdown trigger: start if enough joined players.
             if (session_count() >= constants::min_players) {
                 start_countdown();
             }
@@ -296,6 +312,9 @@ void Server::handle_join(Session& session, const ctf::Join& msg) {
     session.player_name = msg.name;
     session.joined = true;
 
+    std::cout << "[server] " << session.player_name << " (" << session.player_id
+              << ") joined. Total players: " << session_count() << "\n";
+
     // Send welcome with the fixed config.
     ctf::Welcome welcome{session.player_id, make_config()};
     auto welcome_json = msg::to_json(welcome);
@@ -329,7 +348,7 @@ void Server::handle_error_result(Session& session, const ctf::Error& err) {
 }
 
 void Server::handle_unknown_type(Session& session) {
-    send_error(session, INVALID_PHASE, false);
+    send_error(session, UNKNOWN_TYPE, false);
 }
 
 // ── Sending ──────────────────────────────────────────────────────────────
@@ -393,6 +412,9 @@ void Server::start_countdown() {
     countdown_start_ = std::chrono::steady_clock::now();
     countdown_active_ = true;
 
+    std::cout << "[server] Countdown started: " << countdown_remaining_
+              << " seconds, " << session_count() << " players\n";
+
     broadcast_countdown(countdown_remaining_);
 }
 
@@ -406,8 +428,9 @@ void Server::process_countdown() {
     if (!countdown_active_) return;
 
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - countdown_start_).count();
+    int elapsed_sec = static_cast<int>(elapsed_ms / 1000);
 
     // Check for player drop below minimum.
     if (session_count() < constants::min_players) {
@@ -415,10 +438,13 @@ void Server::process_countdown() {
         return;
     }
 
-    int remaining = constants::countdown_seconds - static_cast<int>(elapsed);
+    int remaining = constants::countdown_seconds - elapsed_sec;
     if (remaining <= 0) {
         // Countdown finished — broadcast start and transition to playing.
         countdown_active_ = false;
+
+        std::cout << "[server] Countdown finished — starting game with "
+                  << session_count() << " players\n";
 
         ctf::Start start_msg;
         auto json = msg::to_json(start_msg);
@@ -439,6 +465,8 @@ void Server::process_countdown() {
     } else if (remaining < countdown_remaining_) {
         // Second ticked — broadcast new countdown value.
         countdown_remaining_ = remaining;
+        std::cout << "[server] Countdown: " << countdown_remaining_
+                  << " seconds remaining\n";
         broadcast_countdown(countdown_remaining_);
     }
 }
