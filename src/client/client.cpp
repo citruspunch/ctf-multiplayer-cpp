@@ -73,14 +73,16 @@ void Client::run() {
     // On macOS, the GLFW NSWindow has a known issue where it initialises
     // in a hidden/inactive state and doesn't come to the front when the
     // process is launched outside LaunchServices.  Requesting the window
-    // to be topmost and resizable up-front (BEFORE InitWindow) makes
-    // GLFW create the NSWindow with the correct level and order it to
-    // the front automatically.  Without this, the window may render
-    // fine but stay behind other windows or be marked "Not Responding"
-    // by the system because it never responds to activation events.
-    SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_WINDOW_RESIZABLE);
+    // to be topmost, resizable, and VSync up-front (BEFORE InitWindow)
+    // makes GLFW create the NSWindow with the correct level AND sync the
+    // buffer swap with the display refresh.  VSync is critical: without
+    // it, the render loop busy-waits and the main thread never yields to
+    // Cocoa's main run loop, so macOS marks the app as "Not Responding"
+    // before the first frame is visible.
+    SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_WINDOW_RESIZABLE |
+                   FLAG_VSYNC_HINT);
 #else
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 #endif
     InitWindow(WINDOW_W, WINDOW_H, "CTF — Client");
 #ifdef __APPLE__
@@ -90,7 +92,10 @@ void Client::run() {
     activate_macos_app_after_init();
 #endif
     window_open_ = true;
-    SetTargetFPS(60);
+    // Use VSync (set via FLAG_VSYNC_HINT above) instead of SetTargetFPS:
+    // SetTargetFPS busy-waits on the main thread, which prevents Cocoa
+    // from processing Apple events and triggers the "Not Responding"
+    // watchdog.  VSync yields the CPU during glfwSwapBuffers.
     SetExitKey(0);  // ESC should not kill the app while typing.
 
     start_broadcast_discovery();

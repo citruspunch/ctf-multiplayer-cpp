@@ -96,18 +96,22 @@ void ServerView::render(const std::string& phase_text) {
         activate_macos_app();
 #endif
 #ifdef __APPLE__
-        // On macOS, FLAG_WINDOW_TOPMOST makes GLFW create the NSWindow
-        // with the correct level so it is ordered to the front when the
-        // process is launched outside LaunchServices.  Without this the
-        // window may render fine but stay behind other windows.
-        SetConfigFlags(FLAG_WINDOW_TOPMOST);
+        // On macOS, FLAG_WINDOW_TOPMOST + FLAG_VSYNC_HINT make GLFW
+        // create the NSWindow with the correct level and sync the swap
+        // with the display.  VSync is critical: without it the render
+        // loop busy-waits and the main thread never yields to Cocoa,
+        // so macOS marks the app as "Not Responding".
+        SetConfigFlags(FLAG_WINDOW_TOPMOST | FLAG_VSYNC_HINT);
+#else
+        SetConfigFlags(FLAG_VSYNC_HINT);
 #endif
         InitWindow(WINDOW_W, WINDOW_H, "CTF Server — Observer");
 #ifdef __APPLE__
         // Step 2: bring window to front *after* InitWindow.
         activate_macos_app_after_init();
 #endif
-        SetTargetFPS(60);
+        // No SetTargetFPS(60) — use VSync (set above) instead so the
+        // main thread yields to Cocoa between frames.
         initialised_ = true;
     }
 
