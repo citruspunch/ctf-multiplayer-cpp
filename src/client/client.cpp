@@ -64,86 +64,61 @@ Client::~Client() {
 
 void Client::run() {
 #ifdef __APPLE__
-    // Step 1: promote process to foreground *before* InitWindow (needed
-    // for WindowServer access).  No-op on non-Apple and harmless when
-    // launched via `open ctf.app`.
+    // Promote the process from a background terminal tool to a
+    // foreground GUI app so it can connect to the WindowServer.
+    // This is a no-op when launched via `open ctf.app`.
     activate_macos_app();
+    // Install a real menu bar so Cmd+Q works (not force-quit).
+    install_macos_menu();
+    clear_macos_quit_request();
 #endif
-#ifdef __APPLE__
-    // macOS / Apple Silicon + Raylib 6.0 has a chronic issue where
-    // FLAG_WINDOW_TOPMOST (and the VSync+TOPMOST combo) leaves the GL
-    // backbuffer in a state where it is never presented to the screen
-    // — the window shows a solid black background even though the
-    // render loop runs and OpenGL commands execute normally.  Drop
-    // TOPMOST entirely on macOS.  We also drop VSync and rely on
-    // SetTargetFPS(60) below for framerate limiting; the main thread
-    // stays responsive via Raylib's internal wait inside the
-    // `while (!WindowShouldClose())` loop.
+
+    // ── Window creation ─────────────────────────────────────────────
+    // On macOS Apple Silicon, FLAG_WINDOW_TOPMOST is broken (black
+    // window), and VSYNC_HINT interactions with the Metal bridge
+    // can cause glfwSwapBuffers to silently no-op.  Use zero extra
+    // flags on macOS; on other platforms, VSYNC_HINT is safe.
+#if defined(__APPLE__)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 #else
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 #endif
     InitWindow(WINDOW_W, WINDOW_H, "CTF — Client");
-#ifdef __APPLE__
-    // Step 2: [NSApp activateIgnoringOtherApps:YES] *after* InitWindow
-    // brings the window to front.  Without this the NSWindow is created
-    // but never ordered forward.
-    activate_macos_app_after_init();
-
-    // Step 3: install a real menu bar with Quit (Cmd+Q).  Without a
-    // menu bar, Raylib's tight glfwPollEvents loop never lets Cocoa
-    // install one — and Cmd+Q has nothing to dispatch to, leaving the
-    // app unkillable through normal channels.
-    install_macos_menu();
-    clear_macos_quit_request();
-
-    // Step 4: warmup frame.  On Apple Silicon, the first EndDrawing
-    // can paint into an unrealised backbuffer that the windowserver
-    // never presents.  Triggering a full Begin/End cycle here, then
-    // pumping the Cocoa run loop, forces the GL context to fully
-    // initialise before the main loop starts.  Belt-and-suspenders:
-    // ClearBackground with the real background colour doubles as a
-    // sanity check that the swap actually reaches the screen.
-    BeginDrawing();
-    ClearBackground(BG_COLOR);
-    EndDrawing();
-    pump_cocoa_main_queue();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    pump_cocoa_main_queue();
-#endif
     window_open_ = true;
+
+    // ── macOS: bring window to front, install quit path ────────────
+#ifdef __APPLE__
+    activate_macos_app_after_init();
+#endif
+
+    // ── Framerate cap ───────────────────────────────────────────────
+    // On macOS with Apple Silicon, SetTargetFPS uses a GLFW wait
+    // timer that plays well with the Metal bridge (unlike VSync,
+    // which can break the swap chain).  60 FPS is the target.
     SetTargetFPS(60);
-    SetExitKey(0);  // Raylib's default ESC-quit is disabled — we
-                    // handle Cmd+Q via the menu and the close button
-                    // via WindowShouldClose() below.  ESC is still
-                    // used to dismiss menus (handled in update_*()).
+    SetExitKey(0);  // ESC handled manually in update()
 
     start_broadcast_discovery();
 
     while (!WindowShouldClose()) {
 #ifdef __APPLE__
-        // Check the macOS menu's Quit (Cmd+Q) request and break out
-        // of the render loop cleanly so destructors and CloseWindow()
-        // run.  macos_quit_requested() is set by the NSMenuItem
-        // action installed in app_activation.mm.
-        if (macos_quit_requested()) {
-            window_open_ = false;
-            break;
-        }
+        if (macos_quit_requested()) { window_open_ = false; break; }
 #endif
         update();
+
+        // ESC handler inside update() sets window_open_ = false.
+        // Break here so the loop exits and the destructor runs
+        // (which calls CloseWindow()).
+        if (!window_open_) break;
+
         BeginDrawing();
         ClearBackground(BG_COLOR);
         draw();
         EndDrawing();
+
 #ifdef __APPLE__
-        // Drain Cocoa's main run loop AFTER the frame is presented
-        // (not before) so the GL swap is not disturbed.  GLFW's
-        // glfwPollEvents only handles GLFW events; this pumps Apple
-        // events (Cmd+Tab, Dock clicks, Cmd+Q via the menu) so the
-        // "Not Responding" badge clears and the menu's action fires.
-        // Must come after EndDrawing so the GL backbuffer swap is
-        // committed before the main run loop is drained.
+        // Drain Cocoa's main queue so Cmd+Q dispatches and the
+        // Dock doesn't show "Not Responding".
         pump_cocoa_main_queue();
 #endif
     }

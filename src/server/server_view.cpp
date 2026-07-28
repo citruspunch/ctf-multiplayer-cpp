@@ -8,9 +8,7 @@
 
 #include <raylib.h>
 
-#include <chrono>
 #include <string>
-#include <thread>
 
 namespace ctf::server {
 
@@ -104,45 +102,16 @@ auto ServerView::should_close() -> bool {
 void ServerView::render(const std::string& phase_text) {
     if (!initialised_) {
 #ifdef __APPLE__
-        // Step 1: promote process to foreground *before* InitWindow.
         activate_macos_app();
-#endif
-#ifdef __APPLE__
-        // macOS / Apple Silicon + Raylib 6.0 has a chronic issue where
-        // FLAG_WINDOW_TOPMOST (and the VSync+TOPMOST combo) leaves the
-        // GL backbuffer in a state where it is never presented to the
-        // screen — the window shows a solid black background even
-        // though the render loop runs and OpenGL commands execute.
-        // Drop TOPMOST entirely on macOS.  We also drop VSync and rely
-        // on SetTargetFPS(60) below for framerate limiting; the main
-        // thread stays responsive via Raylib's internal wait inside
-        // the server's poll loop.
-        SetConfigFlags(0);
+        SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 #else
         SetConfigFlags(FLAG_VSYNC_HINT);
 #endif
         InitWindow(WINDOW_W, WINDOW_H, "CTF Server — Observer");
 #ifdef __APPLE__
-        // Step 2: bring window to front *after* InitWindow.
         activate_macos_app_after_init();
-
-        // Step 3: install a real menu bar with Quit (Cmd+Q).  Without
-        // a menu bar, Cmd+Q has nothing to dispatch to in the
-        // server's tight glfwPollEvents loop.
         install_macos_menu();
         clear_macos_quit_request();
-
-        // Step 4: warmup frame.  On Apple Silicon, the first
-        // EndDrawing can paint into an unrealised backbuffer that the
-        // windowserver never presents.  Triggering a full Begin/End
-        // cycle here, then pumping the Cocoa run loop, forces the GL
-        // context to fully initialise before the main loop starts.
-        BeginDrawing();
-        ClearBackground(BLACK);
-        EndDrawing();
-        pump_cocoa_main_queue();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        pump_cocoa_main_queue();
 #endif
         SetTargetFPS(60);
         SetExitKey(0);  // ESC handled by the caller (Server::run
