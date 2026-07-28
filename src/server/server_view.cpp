@@ -4,6 +4,7 @@
 
 #ifdef __APPLE__
 #include "app_activation.hpp"
+#include <OpenGL/OpenGL.h>
 #endif
 
 #include <raylib.h>
@@ -178,11 +179,19 @@ void ServerView::render(const std::string& phase_text) {
              (WINDOW_W - text_w) / 2, 10,
              20, YELLOW);
 
+    // ── Apple Silicon: flush GL → Metal bridge BEFORE swap ──────────
+    // Same workaround as the client: CGLFlushDrawable before
+    // EndDrawing forces the Metal command buffer to commit, so the
+    // backbuffer is filled before glfwSwapBuffers presents it.
+#ifdef __APPLE__
+    {
+        CGLContextObj ctx = CGLGetCurrentContext();
+        if (ctx) CGLFlushDrawable(ctx);
+    }
+#endif
+
     EndDrawing();
 #ifdef __APPLE__
-    // Drain Cocoa's main run loop AFTER the frame is presented so the
-    // GL swap is not disturbed.  Must come after EndDrawing so the
-    // GL backbuffer swap is committed before the main run loop runs.
     pump_cocoa_main_queue();
 #endif
 }

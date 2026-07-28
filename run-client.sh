@@ -1,16 +1,15 @@
 #!/bin/bash
-# Launch the CTF client via macOS app bundle.
-# The .app bundle is created automatically after `cmake --build`.
+# Launch the CTF client.
 #
 # Usage: ./run-client.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_BUNDLE="$SCRIPT_DIR/build/ctf.app"
+BINARY="$SCRIPT_DIR/build/ctf.app/Contents/MacOS/ctf"
 
-if [ ! -d "$APP_BUNDLE" ]; then
-    echo "Error: $APP_BUNDLE not found."
-    echo "Run 'cmake --build --preset=release' first to create the bundle."
+if [ ! -f "$BINARY" ]; then
+    echo "Error: $BINARY not found."
+    echo "Run 'cmake --build build' first."
     exit 1
 fi
 
-open -n "$APP_BUNDLE" --args --client
+exec "$BINARY" --client

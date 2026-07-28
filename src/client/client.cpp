@@ -6,6 +6,7 @@
 
 #ifdef __APPLE__
 #include "app_activation.hpp"
+#include <OpenGL/OpenGL.h>
 #endif
 
 #include <raylib.h>
@@ -68,16 +69,11 @@ void Client::run() {
     // foreground GUI app so it can connect to the WindowServer.
     // This is a no-op when launched via `open ctf.app`.
     activate_macos_app();
-    // Install a real menu bar so Cmd+Q works (not force-quit).
-    install_macos_menu();
-    clear_macos_quit_request();
 #endif
 
     // ── Window creation ─────────────────────────────────────────────
-    // On macOS Apple Silicon, FLAG_WINDOW_TOPMOST is broken (black
-    // window), and VSYNC_HINT interactions with the Metal bridge
-    // can cause glfwSwapBuffers to silently no-op.  Use zero extra
-    // flags on macOS; on other platforms, VSYNC_HINT is safe.
+    // On macOS Apple Silicon, VSYNC_HINT + TOPMOST are broken (black
+    // window).  Use ONLY FLAG_WINDOW_RESIZABLE on macOS.
 #if defined(__APPLE__)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 #else
@@ -86,15 +82,14 @@ void Client::run() {
     InitWindow(WINDOW_W, WINDOW_H, "CTF — Client");
     window_open_ = true;
 
-    // ── macOS: bring window to front, install quit path ────────────
+    // ── macOS: bring window to front, install menu ──────────────────
 #ifdef __APPLE__
     activate_macos_app_after_init();
+    install_macos_menu();
+    clear_macos_quit_request();
 #endif
 
     // ── Framerate cap ───────────────────────────────────────────────
-    // On macOS with Apple Silicon, SetTargetFPS uses a GLFW wait
-    // timer that plays well with the Metal bridge (unlike VSync,
-    // which can break the swap chain).  60 FPS is the target.
     SetTargetFPS(60);
     SetExitKey(0);  // ESC handled manually in update()
 
@@ -107,13 +102,33 @@ void Client::run() {
         update();
 
         // ESC handler inside update() sets window_open_ = false.
-        // Break here so the loop exits and the destructor runs
-        // (which calls CloseWindow()).
         if (!window_open_) break;
 
         BeginDrawing();
         ClearBackground(BG_COLOR);
         draw();
+
+        // ── Apple Silicon: flush GL → Metal bridge BEFORE swap ────
+        // On Apple Silicon, OpenGL commands go through a Metal
+        // translation layer.  Raylib's rlDrawRenderBatchActive()
+        // (inside EndDrawing) pushes draw calls to the GL pipeline,
+        // but they are buffered in a Metal command buffer that
+        // hasn't been committed yet.  If we let EndDrawing swap
+        // immediately, CGLFlushDrawable presents a stale/empty
+        // backbuffer — hence the black window.
+        //
+        // Calling CGLFlushDrawable HERE (before EndDrawing) forces
+        // the Metal bridge to commit its command buffer to the GL
+        // backbuffer.  Then EndDrawing's own CGLFlushDrawable
+        // (via glfwSwapBuffers) presents the now-filled buffer.
+        // The second CGLFlushDrawable is a cheap no-op (~µs).
+#ifdef __APPLE__
+        {
+            CGLContextObj ctx = CGLGetCurrentContext();
+            if (ctx) CGLFlushDrawable(ctx);
+        }
+#endif
+
         EndDrawing();
 
 #ifdef __APPLE__
