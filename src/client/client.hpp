@@ -100,6 +100,7 @@ private:
     static void text_field(TextField& field, float x, float y, float w,
                            float h);
     static void draw_spinner(float cx, float cy, const char* label);
+    static void draw_help_overlay();
 
     // Look up a player's display name from the lobby roster, falling
     // back to the id when the name is unknown.
@@ -150,6 +151,12 @@ private:
     // Countdown screen particles
     bool                                  countdown_particles_init_{false};
     std::vector<gui::Particle>            countdown_particles_;
+
+    // Fade transitions between screens
+    double                                state_transition_time_{0.0};
+
+    // How-to-Play overlay
+    bool                                  show_help_{false};
 };
 
 }  // namespace ctf::client

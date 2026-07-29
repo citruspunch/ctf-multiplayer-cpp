@@ -168,9 +168,19 @@ void Client::update() {
                                   direct_addr_.focused ||
                                   name_field_.focused;
     if (!any_text_focused && IsKeyPressed(KEY_ESCAPE)) {
-        window_open_ = false;
-        return;
+        // If help overlay is open, close it first.
+        if (show_help_) {
+            show_help_ = false;
+        } else {
+            window_open_ = false;
+            return;
+        }
     }
+
+    // Detect state transition for fade effect.
+    // We snapshot the current state before the per-state update,
+    // then compare after to see if handle_message changed it.
+    ClientState state_before = state_;
 
     switch (state_) {
         case ClientState::Discovery:    update_discovery();    break;
@@ -180,6 +190,12 @@ void Client::update() {
         case ClientState::Playing:      update_playing();      break;
         case ClientState::GameOver:     update_game_over();    break;
         case ClientState::Disconnected: update_disconnected(); break;
+    }
+
+    if (state_ != state_before) {
+        state_transition_time_ = GetTime();
+        // Close the help overlay on state change.
+        show_help_ = false;
     }
 }
 
@@ -192,6 +208,21 @@ void Client::draw() {
         case ClientState::Playing:      draw_playing();      break;
         case ClientState::GameOver:     draw_game_over();    break;
         case ClientState::Disconnected: draw_disconnected(); break;
+    }
+
+    // ── Fade transition overlay ────────────────────────────────────
+    constexpr double FADE_DURATION = 0.4;
+    double elapsed = GetTime() - state_transition_time_;
+    if (elapsed < FADE_DURATION) {
+        unsigned char alpha = static_cast<unsigned char>(
+            255.0 * (1.0 - elapsed / FADE_DURATION));
+        DrawRectangle(0, 0, WINDOW_W, WINDOW_H,
+                      Color{0, 0, 0, alpha});
+    }
+
+    // ── How-to-Play overlay (only in Lobby, on top of everything) ──
+    if (show_help_ && state_ == ClientState::Lobby) {
+        draw_help_overlay();
     }
 }
 
@@ -683,7 +714,25 @@ void Client::draw_join_name() {
 
 // ── Screen: Lobby ────────────────────────────────────────────────────────
 
-void Client::update_lobby() {}
+void Client::update_lobby() {
+    // Toggle help overlay with H.
+    if (IsKeyPressed(KEY_H)) {
+        show_help_ = !show_help_;
+    }
+
+    if (show_help_) {
+        // Click outside the help panel to close it.
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            constexpr float PX = 100, PY = 60, PW = 600, PH = 660;
+            Rectangle panel_rect{PX, PY, PW, PH};
+            if (!CheckCollisionPointRec(GetMousePosition(), panel_rect)) {
+                show_help_ = false;
+            }
+        }
+        // Don't process lobby UI clicks while help is open.
+        return;
+    }
+}
 
 void Client::draw_lobby() {
     // ── Ambient particles background ────────────────────────────────
@@ -1027,6 +1076,109 @@ void Client::draw_game_over() {
     DrawText(ret_msg,
              (WINDOW_W - MeasureText(ret_msg, ret_font)) / 2,
              530, ret_font, Color{180, 180, 190, 200});
+}
+
+void Client::draw_help_overlay() {
+    // Dim background overlay.
+    DrawRectangle(0, 0, WINDOW_W, WINDOW_H,
+                  Color{0, 0, 0, 200});
+
+    constexpr float PX = 100, PY = 60, PW = 600, PH = 660;
+    DrawRectangleRounded(Rectangle{PX, PY, PW, PH}, 0.08f, 8,
+                         Color{25, 30, 40, 250});
+    DrawRectangleRoundedLines(Rectangle{PX, PY, PW, PH}, 0.08f, 8,
+                              Color{80, 90, 110, 200});
+
+    float y = PY + 28;
+
+    // Title
+    const char* title = "How to Play";
+    int tw = MeasureText(title, 32);
+    DrawText(title, (WINDOW_W - tw) / 2, static_cast<int>(y), 32, GOLD);
+    y += 50;
+
+    // ── Objective ──────────────────────────────────────────────────
+    DrawText("Objective", static_cast<int>(PX + 30),
+             static_cast<int>(y), 20, gui::ACCENT_BLUE);
+    y += 28;
+    DrawText("- Capture the flag and carry it outside the", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("  centre circle to score for your team.", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("- Steal the flag from opponents by touching them", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("  while they carry it.", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 38;
+
+    // ── Controls ───────────────────────────────────────────────────
+    DrawText("Controls", static_cast<int>(PX + 30),
+             static_cast<int>(y), 20, gui::ACCENT_BLUE);
+    y += 28;
+    DrawText("W A S D  or  Arrow Keys  —  Move", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, WHITE);
+    y += 22;
+    DrawText("E  —  Interact (capture / steal flag)", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, WHITE);
+    y += 22;
+    DrawText("ESC  —  Quit game  /  Close this screen", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, WHITE);
+    y += 22;
+    DrawText("H  —  Toggle this help screen", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, WHITE);
+    y += 38;
+
+    // ── Rules ──────────────────────────────────────────────────────
+    DrawText("Rules", static_cast<int>(PX + 30),
+             static_cast<int>(y), 20, gui::ACCENT_BLUE);
+    y += 28;
+    DrawText("- Each player spawns outside the centre circle.", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("- Touch the flag to pick it up (E key).", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("- Run outside the circle to score (distance > 315).", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("- If you are carrying the flag and get touched,", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("  the flag is stolen by the opponent.", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 22;
+    DrawText("- Players leave the game when they disconnect.", static_cast<int>(PX + 30),
+             static_cast<int>(y), 16, LIGHTGRAY);
+    y += 38;
+
+    // ── Legend ─────────────────────────────────────────────────────
+    DrawText("Colour Legend", static_cast<int>(PX + 30),
+             static_cast<int>(y), 20, gui::ACCENT_BLUE);
+    y += 28;
+    DrawCircle(static_cast<int>(PX + 38),
+               static_cast<int>(y + 6), 6, GREEN);
+    DrawText("= You", static_cast<int>(PX + 52),
+             static_cast<int>(y), 16, WHITE);
+    y += 24;
+    DrawCircle(static_cast<int>(PX + 38),
+               static_cast<int>(y + 6), 6, BLUE);
+    DrawText("= Other player", static_cast<int>(PX + 52),
+             static_cast<int>(y), 16, WHITE);
+    y += 24;
+    DrawCircle(static_cast<int>(PX + 38),
+               static_cast<int>(y + 6), 6, RED);
+    DrawText("= Flag carrier", static_cast<int>(PX + 52),
+             static_cast<int>(y), 16, WHITE);
+    y += 40;
+
+    // ── Close hint ─────────────────────────────────────────────────
+    const char* close_hint = "Press H or ESC to close";
+    int ch_tw = MeasureText(close_hint, 16);
+    DrawText(close_hint, (WINDOW_W - ch_tw) / 2,
+             static_cast<int>(PY + PH - 30), 16, gui::TEXT_DIM);
 }
 
 // ── Screen: Disconnected ─────────────────────────────────────────────────
