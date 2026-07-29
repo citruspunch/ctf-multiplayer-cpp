@@ -3,6 +3,7 @@ add_library(common STATIC
     json.cpp
     framing.cpp
     messages.cpp
+    gui_helpers.cpp
     net/platform.cpp
     net/socket.cpp
     net/tcp_socket.cpp

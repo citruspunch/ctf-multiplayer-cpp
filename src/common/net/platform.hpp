@@ -28,4 +28,8 @@ auto init_net() -> bool;
 // Clean up the networking subsystem.  Call once per process on shutdown.
 void cleanup_net();
 
+// Resolve the first non-loopback IPv4 address of this machine.
+// Returns "127.0.0.1" as fallback if no suitable interface is found.
+auto get_local_ipv4() -> std::string;
+
 }  // namespace ctf::net

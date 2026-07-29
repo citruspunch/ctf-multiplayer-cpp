@@ -99,6 +99,9 @@ private:
     // Server name for discovery responses.
     std::string server_name_;
 
+    // Resolved local IPv4 address (for display in the observer view).
+    std::string server_ip_;
+
     // UDP discovery server (port 8888).
     std::unique_ptr<discovery::DiscoveryServer> discovery_;
 

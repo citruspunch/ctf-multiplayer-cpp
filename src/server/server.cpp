@@ -69,11 +69,15 @@ auto Session::try_send() -> bool {
 
 Server::Server(int port, bool headless)
     : headless_(headless),
-      server_name_("CTF Server") {
+      server_name_("CTF Server"),
+      server_ip_("127.0.0.1") {
     listener_ = net::TcpSocket::listen(port);
     if (listener_) {
         poller_.add_fd(listener_.native_handle(), true, false);
     }
+
+    // Resolve the local IPv4 for display in the observer view.
+    server_ip_ = net::get_local_ipv4() + ":" + std::to_string(port);
 
     // ── UDP discovery on port 8888 ───────────────────────────────────
     // Bind a UDP socket with SO_REUSEADDR + SO_REUSEPORT for local
