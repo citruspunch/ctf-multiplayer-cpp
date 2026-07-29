@@ -340,6 +340,27 @@ void ServerView::draw_lobby_view(
 
 // ── Game field: circle, flag, players, phase overlay ─────────────────────
 
+// Rolling FPS counter (reliable across platforms).
+struct ServerFPSCounter {
+    int frame_count{0};
+    double last_time{0.0};
+    int current_fps{0};
+
+    void update() {
+        double now = GetTime();
+        if (last_time == 0.0) { last_time = now; return; }
+        ++frame_count;
+        double elapsed = now - last_time;
+        if (elapsed >= 0.5) {
+            current_fps = static_cast<int>(static_cast<double>(frame_count) / elapsed + 0.5);
+            frame_count = 0;
+            last_time = now;
+        }
+    }
+};
+
+static ServerFPSCounter srv_fps;
+
 namespace {
 
 void draw_server_grid(double scale) {
@@ -490,10 +511,9 @@ void ServerView::draw_game_field(const std::string& phase_text) {
     DrawText(phase_text.c_str(),
              (WINDOW_W - text_w) / 2, 5,
              20, YELLOW);
-    // FPS counter using per-frame timing.
-    float dt = GetFrameTime();
-    int fps = (dt > 0.0f) ? static_cast<int>(1.0f / dt + 0.5f) : 0;
-    std::string fps_str = std::to_string(fps) + " FPS";
+    // FPS counter with rolling average.
+    srv_fps.update();
+    std::string fps_str = std::to_string(srv_fps.current_fps) + " FPS";
     DrawText(fps_str.c_str(), 6, 7, 14, LIME);
 
     // Player count overlay.

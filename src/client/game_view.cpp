@@ -18,6 +18,30 @@ constexpr int WINDOW_H = 800;
 // Grid spacing in map units.
 constexpr double GRID_STEP = 50.0;
 
+// ── Rolling FPS counter (more reliable than GetFPS/GetFrameTime on macOS) ──
+struct FPSCounter {
+    int   frame_count{0};
+    double last_time{0.0};
+    int   current_fps{0};
+
+    void update() {
+        double now = GetTime();
+        if (last_time == 0.0) {
+            last_time = now;
+            return;
+        }
+        ++frame_count;
+        double elapsed = now - last_time;
+        if (elapsed >= 0.5) {
+            current_fps = static_cast<int>(static_cast<double>(frame_count) / elapsed + 0.5);
+            frame_count = 0;
+            last_time = now;
+        }
+    }
+};
+
+static FPSCounter fps_counter;
+
 // Look up a display name, falling back to the id.
 auto name_of(const std::string& id,
              const std::map<std::string, std::string>& names) -> std::string {
@@ -212,10 +236,9 @@ void draw_hud(const ctf::State& state,
     // Top bar background.
     DrawRectangle(0, 0, WINDOW_W, 30, Color{0, 0, 0, 170});
 
-    // FPS counter using per-frame timing (more reliable than GetFPS on macOS).
-    float dt = GetFrameTime();
-    int fps = (dt > 0.0f) ? static_cast<int>(1.0f / dt + 0.5f) : 0;
-    std::string fps_str = std::to_string(fps) + " FPS";
+    // FPS counter with rolling average (reliable across all platforms).
+    fps_counter.update();
+    std::string fps_str = std::to_string(fps_counter.current_fps) + " FPS";
     DrawText(fps_str.c_str(), 6, 7, 14, LIME);
 
     // Elapsed time.
