@@ -684,7 +684,7 @@ void Client::update_lobby() {}
 void Client::draw_lobby() {
     DrawText("Lobby", 60, 40, 30, WHITE);
 
-    const std::string id_line = "In waiting room — ID: " + player_id_;
+    const std::string id_line = "In waiting room - ID: " + player_id_;
     DrawText(id_line.c_str(), 60, 92, 20, SKYBLUE);
 
     // ── Server config panel (from welcome) ──────────────────────────
@@ -747,7 +747,7 @@ void Client::draw_lobby() {
                  "when 2+ players are connected.",
                  60, 700, 16, YELLOW);
     } else {
-        DrawText("Enough players — get ready!", 60, 700, 16, GREEN);
+        DrawText("Enough players - get ready!", 60, 700, 16, GREEN);
     }
 
     if (!status_line_.empty()) {

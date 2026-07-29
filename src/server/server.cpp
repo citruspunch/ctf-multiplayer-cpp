@@ -231,6 +231,15 @@ void Server::read_session(Session& session) {
     }
 }
 
+// Returns a human-readable message type name for logging.
+static auto msg_type_name(const ctf::Message& msg) -> const char* {
+    if (std::get_if<ctf::Join>(&msg))       return "join";
+    if (std::get_if<ctf::Input>(&msg))      return "input";
+    if (std::get_if<ctf::Interact>(&msg))   return "interact";
+    if (std::get_if<ctf::Error>(&msg))      return "error";
+    return "unknown";
+}
+
 void Server::dispatch_message(Session& session, const std::string& raw) {
     // Parse the raw line as JSON.
     auto json = json::parse_line(raw);
@@ -275,9 +284,13 @@ void Server::dispatch_message(Session& session, const std::string& raw) {
     }
 
     if (phase_ == Phase::Countdown) {
-        // In countdown, only input/interact after start are invalid.
+        // During countdown the client may briefly send input/interact before
+        // it has received the `start` message.  Silently ignore instead of
+        // sending INVALID_PHASE to avoid spurious errors in the client UI.
         if (std::get_if<ctf::Input>(&msg) || std::get_if<ctf::Interact>(&msg)) {
-            send_error(session, INVALID_PHASE, false);
+            std::cerr << "[server] ignoring " << msg_type_name(msg)
+                      << " from " << (session.joined ? session.player_id : "?")
+                      << " during COUNTDOWN (race — client hasn't seen start)\n";
         } else {
             handle_unknown_type(session);
         }
