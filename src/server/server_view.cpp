@@ -11,6 +11,7 @@
 
 #include <raylib.h>
 
+#include <cmath>
 #include <string>
 
 namespace ctf::server {
@@ -339,58 +340,139 @@ void ServerView::draw_lobby_view(
 
 // ── Game field: circle, flag, players, phase overlay ─────────────────────
 
+namespace {
+
+void draw_server_grid(double scale) {
+    const Color grid_col{40, 42, 48, 80};
+    const int map = constants::map_size;
+    constexpr double GRID_STEP = 50.0;
+    for (double g = 0.0; g <= static_cast<double>(map); g += GRID_STEP) {
+        int pos = static_cast<int>(g * scale);
+        DrawLine(pos, 0, pos, static_cast<int>(static_cast<double>(map) * scale),
+                 grid_col);
+        DrawLine(0, pos,
+                 static_cast<int>(static_cast<double>(map) * scale), pos,
+                 grid_col);
+    }
+    DrawRectangleLines(0, 0,
+                       static_cast<int>(static_cast<double>(map) * scale),
+                       static_cast<int>(static_cast<double>(map) * scale),
+                       Color{100, 100, 110, 160});
+}
+
+void draw_server_circle(double scale) {
+    int cx = static_cast<int>(constants::circle_center_x * scale);
+    int cy = static_cast<int>(constants::circle_center_y * scale);
+    int cr = static_cast<int>(constants::circle_radius * scale);
+
+    for (int r = cr; r > 0; r -= 8) {
+        float t = static_cast<float>(r) / static_cast<float>(cr);
+        unsigned char a = static_cast<unsigned char>((1.0f - t) * 30.0f);
+        DrawCircle(cx, cy, static_cast<float>(r),
+                   Color{180, 180, 190, a});
+    }
+    DrawCircle(cx, cy, static_cast<float>(cr),
+               Color{180, 180, 190, 30});
+    DrawCircleLines(cx, cy, static_cast<float>(cr),
+                    Color{140, 150, 170, 200});
+
+    const char* base = "BASE";
+    int bt = MeasureText(base, 20);
+    DrawText(base, cx - bt / 2, cy - 10, 20,
+             Color{140, 150, 170, 120});
+}
+
+void draw_server_flag(const ctf::game::FlagState& flag, double scale) {
+    int fx = static_cast<int>(flag.x * scale);
+    int fy = static_cast<int>(flag.y * scale);
+    double bob = std::sin(GetTime() * 3.0) * 2.0;
+    int fy_bob = fy + static_cast<int>(bob);
+
+    if (flag.owner.has_value()) {
+        DrawTriangle(
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 8)},
+            Vector2{static_cast<float>(fx + 6), static_cast<float>(fy_bob)},
+            Vector2{static_cast<float>(fx - 6), static_cast<float>(fy_bob)},
+            RED);
+    } else {
+        DrawLine(fx, fy_bob - 10, fx, fy_bob + 8,
+                 Color{120, 130, 140, 180});
+        DrawTriangle(
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 10)},
+            Vector2{static_cast<float>(fx + 10), static_cast<float>(fy_bob - 3)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 3)},
+            WHITE);
+        DrawTriangle(
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 3)},
+            Vector2{static_cast<float>(fx + 8), static_cast<float>(fy_bob + 8)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 8)},
+            Color{200, 200, 210, 200});
+        DrawText("FLAG", fx + 14, fy_bob - 4, 8,
+                 Color{200, 200, 210, 150});
+    }
+}
+
+void draw_server_player(const ctf::game::PlayerState& ps,
+                        const ctf::game::FlagState& flag, double scale) {
+    int px = static_cast<int>(ps.x * scale);
+    int py = static_cast<int>(ps.y * scale);
+    int pr = static_cast<int>(constants::player_radius * scale);
+    bool is_carrier = flag.owner.has_value() && flag.owner.value() == ps.id;
+
+    Color fill = is_carrier ? Color{220, 60, 60, 255}
+                            : Color{70, 120, 220, 255};
+
+    DrawCircleLines(px, py, static_cast<float>(pr + 3),
+                    Color{fill.r, fill.g, fill.b, 80});
+
+    if (is_carrier) {
+        float glow_r = static_cast<float>(pr) + 6.0f +
+                       std::sin(static_cast<float>(GetTime()) * 4.0f) * 3.0f;
+        DrawCircleLines(px, py, glow_r,
+                        Color{220, 60, 60, 120});
+    }
+
+    DrawCircle(px, py, static_cast<float>(pr), fill);
+
+    int text_w = MeasureText(ps.name.c_str(), 10);
+    float lx = static_cast<float>(px - text_w / 2 - 2);
+    float ly = static_cast<float>(py - pr - 12);
+    DrawRectangle(static_cast<int>(lx), static_cast<int>(ly),
+                  static_cast<int>(text_w + 4), 12,
+                  Color{0, 0, 0, 140});
+    DrawText(ps.name.c_str(), px - text_w / 2, py - pr - 12, 10, WHITE);
+}
+
+}  // namespace
+
 void ServerView::draw_game_field(const std::string& phase_text) {
     double scale = static_cast<double>(WINDOW_W) / constants::map_size;
 
-    // ── Draw centre circle ───────────────────────────────────────────
-    int cx = static_cast<int>(constants::circle_center_x * scale);
-    int cy = static_cast<int>(constants::circle_center_y * scale);
-    int radius = static_cast<int>(constants::circle_radius * scale);
+    // ── Background grid ──────────────────────────────────────────────
+    draw_server_grid(scale);
 
-    // Translucent fill + outline.
-    DrawCircle(cx, cy, static_cast<float>(radius),
-               Color{180, 180, 180, 40});
-    DrawCircleLines(cx, cy, static_cast<float>(radius),
-                    Color{160, 160, 170, 180});
+    // ── Centre circle ────────────────────────────────────────────────
+    draw_server_circle(scale);
 
-    // ── Draw flag ────────────────────────────────────────────────────
-    int fx = static_cast<int>(game_state_.flag.x * scale);
-    int fy = static_cast<int>(game_state_.flag.y * scale);
+    // ── Flag ─────────────────────────────────────────────────────────
+    draw_server_flag(game_state_.flag, scale);
 
-    Color flag_col = game_state_.flag.owner.has_value() ? RED : WHITE;
-    DrawTriangle(
-        Vector2{static_cast<float>(fx), static_cast<float>(fy - 10)},
-        Vector2{static_cast<float>(fx - 8), static_cast<float>(fy + 6)},
-        Vector2{static_cast<float>(fx + 8), static_cast<float>(fy + 6)},
-        flag_col);
-
-    // ── Draw players ─────────────────────────────────────────────────
+    // ── Players ──────────────────────────────────────────────────────
     for (const auto& ps : game_state_.players) {
-        int px = static_cast<int>(ps.x * scale);
-        int py = static_cast<int>(ps.y * scale);
-        int pr = static_cast<int>(constants::player_radius * scale);
-
-        Color col = BLUE;
-        if (game_state_.flag.owner.has_value() &&
-            game_state_.flag.owner.value() == ps.id) {
-            col = RED;
-        }
-
-        // Player body.
-        DrawCircle(px, py, static_cast<float>(pr), col);
-
-        // Name label.
-        int text_w = MeasureText(ps.name.c_str(), 10);
-        DrawText(ps.name.c_str(),
-                 px - text_w / 2, py - pr - 14,
-                 10, WHITE);
+        draw_server_player(ps, game_state_.flag, scale);
     }
 
-    // ── Phase overlay ─────────────────────────────────────────────────
+    // ── Phase overlay ────────────────────────────────────────────────
+    DrawRectangle(0, 0, WINDOW_W, 30, Color{0, 0, 0, 170});
     int text_w = MeasureText(phase_text.c_str(), 20);
     DrawText(phase_text.c_str(),
-             (WINDOW_W - text_w) / 2, 10,
+             (WINDOW_W - text_w) / 2, 5,
              20, YELLOW);
+    DrawFPS(8, 7);
+
+    // Player count overlay.
+    std::string count_str = "Players: " + std::to_string(game_state_.players.size());
+    DrawText(count_str.c_str(), WINDOW_W - 150, 7, 16, WHITE);
 }
 
 }  // namespace ctf::server

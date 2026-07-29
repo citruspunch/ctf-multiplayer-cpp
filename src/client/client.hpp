@@ -139,6 +139,7 @@ private:
 
     // Game (Playing)
     InputSampler                          input_;
+    double                                match_start_time_{0.0};
     std::map<std::string, std::string>    player_names_;  // id → name
     std::map<std::string, ctf::Player>    known_players_;  // last state
     std::string                           departure_notice_;

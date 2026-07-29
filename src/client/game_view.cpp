@@ -4,6 +4,8 @@
 
 #include <raylib.h>
 
+#include <cmath>
+#include <map>
 #include <string>
 
 namespace ctf::client {
@@ -12,6 +14,9 @@ namespace {
 
 constexpr int WINDOW_W = 800;
 constexpr int WINDOW_H = 800;
+
+// Grid spacing in map units.
+constexpr double GRID_STEP = 50.0;
 
 // Look up a display name, falling back to the id.
 auto name_of(const std::string& id,
@@ -22,67 +27,228 @@ auto name_of(const std::string& id,
     return id;
 }
 
-}  // namespace
+void draw_background_grid(double scale) {
+    // Subtle grid lines.
+    const Color grid_col{40, 42, 48, 80};
+    const int map = constants::map_size;
+    for (double g = 0.0; g <= static_cast<double>(map); g += GRID_STEP) {
+        int pos = static_cast<int>(g * scale);
+        // Vertical
+        DrawLine(pos, 0, pos, static_cast<int>(static_cast<double>(map) * scale),
+                 grid_col);
+        // Horizontal
+        DrawLine(0, pos,
+                 static_cast<int>(static_cast<double>(map) * scale), pos,
+                 grid_col);
+    }
 
-void draw_game_view(const ctf::State& state, const std::string& self_id,
-                    const std::map<std::string, std::string>& names) {
-    const double scale =
-        static_cast<double>(WINDOW_W) / constants::map_size;
+    // Map border
+    DrawRectangleLines(0, 0,
+                       static_cast<int>(static_cast<double>(map) * scale),
+                       static_cast<int>(static_cast<double>(map) * scale),
+                       Color{100, 100, 110, 160});
+}
 
-    // ── Centre circle ──────────────────────────────────────────────
+void draw_centre_circle(double scale) {
     const int cx = static_cast<int>(constants::circle_center_x * scale);
     const int cy = static_cast<int>(constants::circle_center_y * scale);
     const int cr = static_cast<int>(constants::circle_radius * scale);
-    DrawCircle(cx, cy, static_cast<float>(cr), LIGHTGRAY);
 
-    // ── Flag ────────────────────────────────────────────────────────
+    // Subtle radial gradient (multiple concentric rings).
+    for (int r = cr; r > 0; r -= 8) {
+        float t = static_cast<float>(r) / static_cast<float>(cr);
+        unsigned char a = static_cast<unsigned char>((1.0f - t) * 30.0f);
+        DrawCircle(cx, cy, static_cast<float>(r),
+                   Color{180, 180, 190, a});
+    }
+
+    // Translucent fill.
+    DrawCircle(cx, cy, static_cast<float>(cr),
+               Color{180, 180, 190, 30});
+
+    // Bold outline.
+    DrawCircleLines(cx, cy, static_cast<float>(cr),
+                    Color{140, 150, 170, 200});
+
+    // "BASE" label centred.
+    const char* base_text = "BASE";
+    int bt = MeasureText(base_text, 20);
+    DrawText(base_text, cx - bt / 2, cy - 10, 20,
+             Color{140, 150, 170, 120});
+}
+
+void draw_flag(const ctf::State& state, double scale) {
     const bool  owned = state.flag.owner.has_value();
     const int   fx = static_cast<int>(state.flag.x * scale);
     const int   fy = static_cast<int>(state.flag.y * scale);
+
+    // Bobbing animation.
+    double bob = std::sin(GetTime() * 3.0) * 2.0;
+    int fy_bob = fy + static_cast<int>(bob);
+
     const Color flag_col = owned ? RED : WHITE;
-    DrawTriangle(
-        Vector2{static_cast<float>(fx), static_cast<float>(fy - 10)},
-        Vector2{static_cast<float>(fx - 8), static_cast<float>(fy + 6)},
-        Vector2{static_cast<float>(fx + 8), static_cast<float>(fy + 6)},
-        flag_col);
 
-    // ── Players ─────────────────────────────────────────────────────
-    const int pr = static_cast<int>(constants::player_radius * scale);
-    for (const auto& p : state.players) {
-        const int px = static_cast<int>(p.x * scale);
-        const int py = static_cast<int>(p.y * scale);
+    if (!owned) {
+        // Flag pole.
+        DrawLine(fx, fy_bob - 10, fx, fy_bob + 8,
+                 Color{120, 130, 140, 180});
 
-        Color col = BLUE;  // others
-        if (owned && state.flag.owner.value() == p.id) {
-            col = RED;     // carrier
-        } else if (p.id == self_id) {
-            col = GREEN;   // self
-        }
+        // Flag fabric: two triangles for a waving effect.
+        DrawTriangle(
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 10)},
+            Vector2{static_cast<float>(fx + 10), static_cast<float>(fy_bob - 3)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 3)},
+            WHITE);
+        DrawTriangle(
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 3)},
+            Vector2{static_cast<float>(fx + 8), static_cast<float>(fy_bob + 8)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 8)},
+            Color{200, 200, 210, 200});
 
-        DrawCircle(px, py, static_cast<float>(pr), col);
-
-        // Name label above the circle.
-        const std::string label = name_of(p.id, names);
-        const int tw = MeasureText(label.c_str(), 10);
-        DrawText(label.c_str(), px - tw / 2, py - pr - 14, 10, WHITE);
-    }
-
-    // ── Overlay ─────────────────────────────────────────────────────
-    DrawRectangle(0, 0, WINDOW_W, 28, Color{0, 0, 0, 160});
-    DrawFPS(8, 6);
-
-    const std::string count =
-        "Players: " + std::to_string(state.players.size());
-    DrawText(count.c_str(), 90, 6, 16, WHITE);
-
-    std::string flag_line;
-    if (owned) {
-        flag_line = "Flag: " + name_of(state.flag.owner.value(), names);
+        // "FLAG" label when on the ground.
+        DrawText("FLAG", fx + 14, fy_bob - 4, 8,
+                 Color{200, 200, 210, 150});
     } else {
-        flag_line = "Flag: free";
+        // Carried flag — simpler, more compact.
+        DrawTriangle(
+            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 8)},
+            Vector2{static_cast<float>(fx + 6), static_cast<float>(fy_bob)},
+            Vector2{static_cast<float>(fx - 6), static_cast<float>(fy_bob)},
+            RED);
     }
-    DrawText(flag_line.c_str(), 250, 6, 16,
-             owned ? RED : LIGHTGRAY);
+}
+
+void draw_player(const ctf::Player& p, const std::string& self_id,
+                 const std::map<std::string, std::string>& names,
+                 const ctf::Flag& flag, double scale,
+                 int dir_x, int dir_y) {
+    const int px = static_cast<int>(p.x * scale);
+    const int py = static_cast<int>(p.y * scale);
+    const int pr = static_cast<int>(constants::player_radius * scale);
+    const bool is_self = (p.id == self_id);
+    const bool is_carrier = flag.owner.has_value() && flag.owner.value() == p.id;
+
+    // Colour.
+    Color fill;
+    if (is_carrier) {
+        fill = Color{220, 60, 60, 255};       // carrier — bright red
+    } else if (is_self) {
+        fill = Color{60, 200, 90, 255};        // self — bright green
+    } else {
+        fill = Color{70, 120, 220, 255};       // others — blue
+    }
+
+    // Outer ring (subtle).
+    DrawCircleLines(px, py, static_cast<float>(pr + 3),
+                    Color{fill.r, fill.g, fill.b, 80});
+
+    // Carrier glow (pulsating).
+    if (is_carrier) {
+        float glow_r = static_cast<float>(pr) + 6.0f +
+                       std::sin(static_cast<float>(GetTime()) * 4.0f) * 3.0f;
+        DrawCircleLines(px, py, glow_r,
+                        Color{220, 60, 60, 120});
+    }
+
+    // Player body.
+    DrawCircle(px, py, static_cast<float>(pr), fill);
+
+    // Direction indicator (self only, when moving).
+    if (is_self && (dir_x != 0 || dir_y != 0)) {
+        float tip_x = static_cast<float>(px) +
+                      static_cast<float>(dir_x) * static_cast<float>(pr + 8);
+        float tip_y = static_cast<float>(py) +
+                      static_cast<float>(dir_y) * static_cast<float>(pr + 8);
+        float back_x = static_cast<float>(px) +
+                       static_cast<float>(dir_x) * static_cast<float>(pr + 2);
+        float back_y = static_cast<float>(py) +
+                       static_cast<float>(dir_y) * static_cast<float>(pr + 2);
+
+        // Perpendicular for the triangle base.
+        float perp_x = -static_cast<float>(dir_y);
+        float perp_y = static_cast<float>(dir_x);
+
+        DrawTriangle(
+            Vector2{tip_x, tip_y},
+            Vector2{back_x + perp_x * 4.0f, back_y + perp_y * 4.0f},
+            Vector2{back_x - perp_x * 4.0f, back_y - perp_y * 4.0f},
+            Color{255, 255, 255, 200});
+    }
+
+    // Name label with semi-transparent background.
+    const std::string label = name_of(p.id, names);
+    const int ts = 10;
+    const int tw = MeasureText(label.c_str(), ts);
+    const float lx = static_cast<float>(px - tw / 2 - 2);
+    const float ly = static_cast<float>(py - pr - 12);
+    const float lw = static_cast<float>(tw + 4);
+    const float lh = static_cast<float>(ts + 2);
+    DrawRectangle(static_cast<int>(lx), static_cast<int>(ly),
+                  static_cast<int>(lw), static_cast<int>(lh),
+                  Color{0, 0, 0, 140});
+    DrawText(label.c_str(), px - tw / 2, py - pr - 12, ts, WHITE);
+}
+
+void draw_hud(const ctf::State& state,
+              const std::map<std::string, std::string>& names,
+              double elapsed_sec) {
+    // Top bar background.
+    DrawRectangle(0, 0, WINDOW_W, 30, Color{0, 0, 0, 170});
+
+    // FPS.
+    DrawFPS(8, 7);
+
+    // Elapsed time.
+    int mins = static_cast<int>(elapsed_sec) / 60;
+    int secs = static_cast<int>(elapsed_sec) % 60;
+    std::string time_str = std::to_string(mins) + ":" +
+                           (secs < 10 ? "0" : "") + std::to_string(secs);
+    DrawText(time_str.c_str(), 90, 7, 16, WHITE);
+
+    // Players alive.
+    std::string count_str = "Players: " + std::to_string(state.players.size());
+    DrawText(count_str.c_str(), 180, 7, 16, WHITE);
+
+    // Flag status.
+    bool owned = state.flag.owner.has_value();
+    std::string flag_str;
+    if (owned) {
+        flag_str = "Flag: " + name_of(state.flag.owner.value(), names);
+    } else {
+        flag_str = "Flag: free";
+    }
+    DrawText(flag_str.c_str(), 360, 7, 16, owned ? RED : Color{180, 180, 180, 255});
+
+    // Bottom bar — control hints.
+    DrawRectangle(0, WINDOW_H - 24, WINDOW_W, 24, Color{0, 0, 0, 160});
+    DrawText("WASD/Arrows: Move   |   E: Interact   |   ESC: Quit",
+             8, WINDOW_H - 20, 12, Color{120, 130, 140, 200});
+}
+
+}  // namespace
+
+void draw_game_view(const ctf::State& state, const std::string& self_id,
+                    const std::map<std::string, std::string>& names,
+                    double elapsed_sec, int dir_x, int dir_y) {
+    const double scale =
+        static_cast<double>(WINDOW_W) / constants::map_size;
+
+    // ── Background grid ─────────────────────────────────────────────
+    draw_background_grid(scale);
+
+    // ── Centre circle ───────────────────────────────────────────────
+    draw_centre_circle(scale);
+
+    // ── Flag ─────────────────────────────────────────────────────────
+    draw_flag(state, scale);
+
+    // ── Players ──────────────────────────────────────────────────────
+    for (const auto& p : state.players) {
+        draw_player(p, self_id, names, state.flag, scale, dir_x, dir_y);
+    }
+
+    // ── HUD ──────────────────────────────────────────────────────────
+    draw_hud(state, names, elapsed_sec);
 }
 
 }  // namespace ctf::client

@@ -320,6 +320,7 @@ void Client::handle_message(const std::string& line) {
             known_players_.clear();  // Fresh round — rebuild from states.
             departure_notice_.clear();
             input_.reset();  // Fresh round — neutral direction.
+            match_start_time_ = GetTime();
             state_ = ClientState::Playing;
         }
         return;
@@ -801,7 +802,9 @@ void Client::update_playing() {
 
 void Client::draw_playing() {
     if (latest_state_) {
-        draw_game_view(*latest_state_, player_id_, player_names_);
+        double elapsed = GetTime() - match_start_time_;
+        draw_game_view(*latest_state_, player_id_, player_names_,
+                       elapsed, input_.dir_x(), input_.dir_y());
     } else {
         DrawText("Waiting for first state...", 60, 95, 20, GRAY);
     }
