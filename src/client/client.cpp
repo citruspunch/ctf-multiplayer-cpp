@@ -299,12 +299,14 @@ void Client::handle_message(const std::string& line) {
             known_players_.clear();
             departure_notice_.clear();
             winner_id_.clear();
+            countdown_particles_init_ = false;
             state_ = ClientState::Lobby;
         }
         return;
     }
 
     if (auto* cd = std::get_if<Countdown>(&msg)) {
+        countdown_particles_init_ = false;
         countdown_seconds_ = cd->seconds;
         if (state_ == ClientState::Lobby ||
             state_ == ClientState::Countdown) {
@@ -352,6 +354,7 @@ void Client::handle_message(const std::string& line) {
     if (auto* over = std::get_if<GameOver>(&msg)) {
         if (state_ == ClientState::Playing) {
             winner_id_ = over->winner;
+            match_end_time_ = GetTime();
             state_ = ClientState::GameOver;
         }
         return;
@@ -683,76 +686,149 @@ void Client::draw_join_name() {
 void Client::update_lobby() {}
 
 void Client::draw_lobby() {
-    DrawText("Lobby", 60, 40, 30, WHITE);
+    // ── Ambient particles background ────────────────────────────────
+    if (!countdown_particles_init_) {
+        gui::init_particles(countdown_particles_, 30,
+                            static_cast<float>(WINDOW_W),
+                            static_cast<float>(WINDOW_H));
+        countdown_particles_init_ = true;
+    }
+    gui::draw_ambient_particles(countdown_particles_,
+                                static_cast<float>(WINDOW_W),
+                                static_cast<float>(WINDOW_H),
+                                GetFrameTime());
 
-    const std::string id_line = "In waiting room - ID: " + player_id_;
-    DrawText(id_line.c_str(), 60, 92, 20, SKYBLUE);
+    // ── Title ────────────────────────────────────────────────────────
+    const char* title = "GAME LOBBY";
+    int tw = MeasureText(title, 34);
+    DrawText(title, (WINDOW_W - tw) / 2, 35, 34, WHITE);
 
-    // ── Server config panel (from welcome) ──────────────────────────
-    constexpr float CX = 470, CY = 40, CW = 280, CH = 170;
-    DrawRectangle(CX, CY, CW, CH, PANEL_COLOR);
-    DrawRectangleLines(CX, CY, CW, CH, GRAY);
-    DrawText("Server config", CX + 12, CY + 10, 18, YELLOW);
+    // Player ID subtitle.
+    std::string id_line = "ID: " + player_id_;
+    DrawText(id_line.c_str(), (WINDOW_W - MeasureText(id_line.c_str(), 16)) / 2,
+             80, 16, gui::TEXT_DIM);
+
+    // ── Compact server config panel (top-right) ─────────────────────
+    constexpr float CX = 580, CY = 30, CW = 200, CH = 120;
+    DrawRectangleRounded(Rectangle{CX, CY, CW, CH}, 0.12f, 6,
+                         gui::PANEL_COLOR);
+    DrawRectangleRoundedLines(Rectangle{CX, CY, CW, CH}, 0.12f, 6,
+                              Color{60, 65, 75, 200});
+    DrawText("Server", CX + 10, CY + 6, 14, gui::ACCENT_BLUE);
+    DrawText("Config", CX + 10, CY + 22, 14, gui::ACCENT_BLUE);
     if (config_) {
-        const auto line = [](const char* key, int value, float y) {
-            DrawText(key, CX + 12, static_cast<int>(y), 16, LIGHTGRAY);
-            const std::string v = std::to_string(value);
-            DrawText(v.c_str(), CX + 200, static_cast<int>(y), 16, WHITE);
+        auto line = [&](const char* key, int value, float y) {
+            DrawText(key, static_cast<int>(CX + 10), static_cast<int>(y),
+                     13, gui::TEXT_DIM);
+            DrawText(std::to_string(value).c_str(),
+                     static_cast<int>(CX + 110), static_cast<int>(y),
+                     13, WHITE);
         };
-        line("map_size",        config_->map_size,        CY + 40);
-        line("circle_radius",   config_->circle_radius,   CY + 62);
-        line("player_radius",   config_->player_radius,   CY + 84);
-        line("interact_radius", config_->interact_radius, CY + 106);
-        line("speed",           config_->speed,           CY + 128);
-        line("tick_rate",       config_->tick_rate,       CY + 150);
-    } else {
-        DrawText("(no config)", CX + 12, CY + 40, 16, GRAY);
+        line("Map",       config_->map_size,        CY + 46);
+        line("Speed",     config_->speed,           CY + 66);
+        line("Tick",      config_->tick_rate,       CY + 86);
+        line("Radius",    config_->player_radius,   CY + 106);
     }
 
     // ── Player table ────────────────────────────────────────────────
-    const std::string header = "Players (" +
-                               std::to_string(lobby_players_.size()) + "/" +
-                               std::to_string(constants::max_players) + ")";
-    DrawText(header.c_str(), 60, 150, 20, YELLOW);
+    constexpr float TX = 80, TY = 130, TW = 560, ROW_H = 30;
+    constexpr int MAX_ROWS = 14;
 
-    constexpr float TX = 60, TY = 185, TW = 680, ROW_H = 28;
-    constexpr int MAX_ROWS = 16;
-    DrawRectangle(TX, TY, TW, ROW_H, PANEL_COLOR);
-    DrawText("ID", TX + 12, TY + 6, 16, YELLOW);
-    DrawText("Name", TX + 140, TY + 6, 16, YELLOW);
+    // Header
+    DrawRectangle(static_cast<int>(TX), static_cast<int>(TY),
+                  static_cast<int>(TW), static_cast<int>(ROW_H),
+                  gui::PANEL_COLOR);
+    DrawText("#",    static_cast<int>(TX + 12), static_cast<int>(TY + 6),
+             16, gui::ACCENT_BLUE);
+    DrawText("ID",   static_cast<int>(TX + 60), static_cast<int>(TY + 6),
+             16, gui::ACCENT_BLUE);
+    DrawText("Name", static_cast<int>(TX + 280), static_cast<int>(TY + 6),
+             16, gui::ACCENT_BLUE);
+    DrawText("Status", static_cast<int>(TX + 440), static_cast<int>(TY + 6),
+             16, gui::ACCENT_BLUE);
+    DrawRectangleLines(static_cast<int>(TX), static_cast<int>(TY),
+                       static_cast<int>(TW), static_cast<int>(ROW_H),
+                       Color{60, 65, 75, 200});
 
     int row = 0;
     for (const auto& p : lobby_players_) {
         if (row >= MAX_ROWS) break;
         const float ry = TY + ROW_H * (static_cast<float>(row) + 1.0f);
         const bool is_self = (p.id == player_id_);
+
         if (is_self) {
-            DrawRectangle(TX, ry, TW, ROW_H, SELECT_COLOR);
+            DrawRectangle(static_cast<int>(TX), static_cast<int>(ry),
+                          static_cast<int>(TW), static_cast<int>(ROW_H),
+                          gui::SELECT_COLOR);
         } else if (row % 2 == 0) {
-            DrawRectangle(TX, ry, TW, ROW_H, ROW_ALT_COLOR);
+            DrawRectangle(static_cast<int>(TX), static_cast<int>(ry),
+                          static_cast<int>(TW), static_cast<int>(ROW_H),
+                          gui::ROW_ALT_COLOR);
         }
-        DrawText(p.id.c_str(), TX + 12, ry + 6, 16,
-                 is_self ? WHITE : LIGHTGRAY);
-        DrawText(p.name.c_str(), TX + 140, ry + 6, 16, WHITE);
+
+        // Row #
+        DrawText(std::to_string(row + 1).c_str(),
+                 static_cast<int>(TX + 12), static_cast<int>(ry + 6),
+                 15, gui::TEXT_DIM);
+        // ID
+        DrawText(p.id.c_str(),
+                 static_cast<int>(TX + 60), static_cast<int>(ry + 6),
+                 15, is_self ? WHITE : SKYBLUE);
+        // Name
+        DrawText(p.name.c_str(),
+                 static_cast<int>(TX + 280), static_cast<int>(ry + 6),
+                 15, WHITE);
+
+        // Status dot + label
+        DrawCircle(static_cast<int>(TX + 450), static_cast<int>(ry + ROW_H / 2),
+                   4.0f, GREEN);
+        DrawText("ready",
+                 static_cast<int>(TX + 460), static_cast<int>(ry + 6),
+                 13, GREEN);
+
         if (is_self) {
-            DrawText("(you)", TX + 620, ry + 6, 16, SKYBLUE);
+            DrawText("(you)",
+                     static_cast<int>(TX + TW - 58), static_cast<int>(ry + 6),
+                     13, gui::ACCENT_BLUE);
         }
         ++row;
     }
-    DrawRectangleLines(TX, TY, TW, ROW_H * (MAX_ROWS + 1), GRAY);
 
-    // No start button — the countdown triggers automatically.
-    if (lobby_players_.size() <
-        static_cast<std::size_t>(constants::min_players)) {
-        DrawText("Waiting for more players — the game starts automatically "
-                 "when 2+ players are connected.",
-                 60, 700, 16, YELLOW);
-    } else {
-        DrawText("Enough players - get ready!", 60, 700, 16, GREEN);
+    // Table border (only if rows exist)
+    if (static_cast<int>(lobby_players_.size()) > 0) {
+        int vis = std::min(static_cast<int>(lobby_players_.size()), MAX_ROWS);
+        DrawRectangleLines(static_cast<int>(TX), static_cast<int>(TY),
+                           static_cast<int>(TW),
+                           static_cast<int>(ROW_H * (static_cast<float>(vis) + 1.0f)),
+                           Color{60, 65, 75, 200});
     }
 
+    // ── Bottom status bar ────────────────────────────────────────────
+    // Semi-transparent bar across the full width.
+    DrawRectangle(0, WINDOW_H - 48, WINDOW_W, 48,
+                  Color{0, 0, 0, 180});
+
+    std::string status;
+    Color status_col;
+    auto count = lobby_players_.size();
+    if (count < static_cast<std::size_t>(constants::min_players)) {
+        status = "⏳ Waiting for players (" +
+                 std::to_string(count) + "/" +
+                 std::to_string(constants::min_players) +
+                 " minimum)";
+        status_col = YELLOW;
+    } else {
+        status = "✓ Game starting soon! (" +
+                 std::to_string(count) + " players connected)";
+        status_col = GREEN;
+    }
+    int status_tw = MeasureText(status.c_str(), 16);
+    DrawText(status.c_str(), (WINDOW_W - status_tw) / 2,
+             WINDOW_H - 35, 16, status_col);
+
+    // Error text overlay (if any).
     if (!status_line_.empty()) {
-        DrawText(status_line_.c_str(), 60, 730, 16, RED);
+        DrawText(status_line_.c_str(), 60, 500, 16, RED);
     }
 }
 
@@ -761,22 +837,83 @@ void Client::draw_lobby() {
 void Client::update_countdown() {}
 
 void Client::draw_countdown() {
-    DrawText("Game starting", (WINDOW_W - MeasureText("Game starting", 28)) / 2,
-             220, 28, LIGHTGRAY);
+    // ── Particle background (reuse lobby particles, reinit each countdown) ─
+    if (!countdown_particles_init_) {
+        gui::init_particles(countdown_particles_, 35,
+                            static_cast<float>(WINDOW_W),
+                            static_cast<float>(WINDOW_H));
+        countdown_particles_init_ = true;
+    }
+    gui::draw_ambient_particles(countdown_particles_,
+                                static_cast<float>(WINDOW_W),
+                                static_cast<float>(WINDOW_H),
+                                GetFrameTime());
 
-    // Large centred number, pulse once per second change.
+    // ── "Game starting" label ────────────────────────────────────────
+    const char* start_label = "Game starting";
+    DrawText(start_label,
+             (WINDOW_W - MeasureText(start_label, 28)) / 2,
+             180, 28, LIGHTGRAY);
+
+    // ── Big number with shadow and color transition ──────────────────
     const std::string num = std::to_string(countdown_seconds_);
+
+    // Colour: green (5-4) → yellow (3-2) → red (1)
+    Color num_col;
+    if (countdown_seconds_ >= 4) {
+        num_col = Color{100, 220, 80, 255};   // green
+    } else if (countdown_seconds_ >= 2) {
+        num_col = Color{240, 220, 60, 255};    // yellow
+    } else {
+        num_col = Color{240, 70, 50, 255};     // red
+    }
+
     const float pulse =
         1.0f + 0.15f * static_cast<float>(std::fmod(GetTime(), 1.0));
     const int font_size = static_cast<int>(220.0f * pulse);
     const int tw = MeasureText(num.c_str(), font_size);
-    DrawText(num.c_str(), (WINDOW_W - tw) / 2, (WINDOW_H - font_size) / 2,
-             font_size, YELLOW);
 
-    const std::string info =
+    // Shadow (black, offset 3px).
+    DrawText(num.c_str(), (WINDOW_W - tw) / 2 + 3,
+             (WINDOW_H - font_size) / 2 + 3,
+             font_size, Color{0, 0, 0, 120});
+
+    // Main number.
+    DrawText(num.c_str(), (WINDOW_W - tw) / 2, (WINDOW_H - font_size) / 2,
+             font_size, num_col);
+
+    // ── Expanding rings around the number ────────────────────────────
+    constexpr float RING_BASE = 120.0f;
+    float ring_r = RING_BASE + std::fmod(static_cast<float>(GetTime()) * 60.0f,
+                                         60.0f);
+    DrawCircleLines(WINDOW_W / 2, WINDOW_H / 2,
+                    ring_r, Color{255, 255, 255, 20});
+    DrawCircleLines(WINDOW_W / 2, WINDOW_H / 2,
+                    ring_r + 15.0f, Color{255, 255, 255, 12});
+
+    // ── Player roster below ──────────────────────────────────────────
+    std::string player_list;
+    for (std::size_t i = 0; i < lobby_players_.size(); ++i) {
+        if (i > 0) player_list += ", ";
+        player_list += lobby_players_[i].name;
+    }
+    if (player_list.empty()) {
+        player_list = "No players";
+    }
+    // Truncate if too long.
+    if (player_list.size() > 60) {
+        player_list.resize(60);
+        player_list += "...";
+    }
+
+    int roster_tw = MeasureText(player_list.c_str(), 14);
+    DrawText(player_list.c_str(), (WINDOW_W - roster_tw) / 2,
+             610, 14, gui::TEXT_DIM);
+
+    std::string info =
         std::to_string(lobby_players_.size()) + " players in this round";
-    DrawText(info.c_str(), (WINDOW_W - MeasureText(info.c_str(), 20)) / 2, 560,
-             20, LIGHTGRAY);
+    DrawText(info.c_str(), (WINDOW_W - MeasureText(info.c_str(), 18)) / 2,
+             640, 18, LIGHTGRAY);
 }
 
 // ── Screen: Playing ──────────────────────────────────────────────────────
@@ -824,23 +961,72 @@ void Client::draw_playing() {
 void Client::update_game_over() {}
 
 void Client::draw_game_over() {
-    // Resolve the winner's display name from the lobby roster.
-    std::string line;
-    if (winner_id_ == player_id_) {
-        line = "You won!";
-    } else {
-        line = name_of(winner_id_) + " won!";
-    }
-    const int font_size = 48;
-    DrawText(line.c_str(),
-             (WINDOW_W - MeasureText(line.c_str(), font_size)) / 2,
-             320, font_size, GOLD);
+    // ── Compute match duration ───────────────────────────────────────
+    double match_duration = match_end_time_ - match_start_time_;
+    int mins = static_cast<int>(match_duration) / 60;
+    int secs = static_cast<int>(match_duration) % 60;
+    std::string duration_str = "Match duration: " +
+                               std::to_string(mins) + ":" +
+                               (secs < 10 ? "0" : "") + std::to_string(secs);
 
+    // ── Winner banner ────────────────────────────────────────────────
+    std::string winner_line;
+    if (winner_id_ == player_id_) {
+        winner_line = "🏆  You Win!  🏆";
+    } else {
+        winner_line = "🏆  " + name_of(winner_id_) + " Wins!  🏆";
+    }
+
+    // Shadow
+    DrawText(winner_line.c_str(),
+             (WINDOW_W - MeasureText(winner_line.c_str(), 48)) / 2 + 3,
+             323, 48, Color{0, 0, 0, 120});
+
+    // Main banner in gold.
+    DrawText(winner_line.c_str(),
+             (WINDOW_W - MeasureText(winner_line.c_str(), 48)) / 2,
+             320, 48, GOLD);
+
+    // ── Subtitle ─────────────────────────────────────────────────────
+    std::string sub;
+    if (winner_id_ == player_id_) {
+        sub = "Congratulations, " + name_of(player_id_) + "!";
+    } else {
+        sub = "Better luck next time!";
+    }
+    int sub_tw = MeasureText(sub.c_str(), 22);
+    DrawText(sub.c_str(), (WINDOW_W - sub_tw) / 2, 385, 22, LIGHTGRAY);
+
+    // ── Match info ───────────────────────────────────────────────────
+    DrawText(duration_str.c_str(),
+             (WINDOW_W - MeasureText(duration_str.c_str(), 18)) / 2,
+             430, 18, gui::TEXT_DIM);
+
+    // ── Player roster ────────────────────────────────────────────────
+    std::string roster = "Players: ";
+    for (std::size_t i = 0; i < lobby_players_.size(); ++i) {
+        if (i > 0) roster += ", ";
+        roster += lobby_players_[i].name;
+        if (lobby_players_[i].id == winner_id_) roster += " ★";
+    }
+    if (roster.size() > 70) {
+        roster.resize(70);
+        roster += "...";
+    }
+    int roster_tw = MeasureText(roster.c_str(), 14);
+    DrawText(roster.c_str(), (WINDOW_W - roster_tw) / 2,
+             470, 14, gui::TEXT_DIM);
+
+    // ── Return countdown ─────────────────────────────────────────────
     // The server sends `lobby` after the post-game pause (~5 s), which
     // transitions the client back to the Lobby screen automatically.
-    DrawText("Returning to lobby...",
-             (WINDOW_W - MeasureText("Returning to lobby...", 20)) / 2,
-             400, 20, LIGHTGRAY);
+    // We show a pulsing "Returning to lobby..." message.
+    float pulse = 1.0f + 0.08f * std::sin(static_cast<float>(GetTime()) * 3.0f);
+    int ret_font = static_cast<int>(20.0f * pulse);
+    const char* ret_msg = "Returning to lobby...";
+    DrawText(ret_msg,
+             (WINDOW_W - MeasureText(ret_msg, ret_font)) / 2,
+             530, ret_font, Color{180, 180, 190, 200});
 }
 
 // ── Screen: Disconnected ─────────────────────────────────────────────────

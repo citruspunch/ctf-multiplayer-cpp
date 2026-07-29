@@ -1,6 +1,7 @@
 #pragma once
 
 #include "framing.hpp"
+#include "gui_helpers.hpp"
 #include "input.hpp"
 #include "messages.hpp"
 #include "net/tcp_socket.hpp"
@@ -140,10 +141,15 @@ private:
     // Game (Playing)
     InputSampler                          input_;
     double                                match_start_time_{0.0};
+    double                                match_end_time_{0.0};
     std::map<std::string, std::string>    player_names_;  // id → name
     std::map<std::string, ctf::Player>    known_players_;  // last state
     std::string                           departure_notice_;
     double                                departure_notice_time_{0.0};
+
+    // Countdown screen particles
+    bool                                  countdown_particles_init_{false};
+    std::vector<gui::Particle>            countdown_particles_;
 };
 
 }  // namespace ctf::client
