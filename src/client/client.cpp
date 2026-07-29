@@ -238,6 +238,7 @@ void Client::connect_to(const std::string& ip, int port) {
     recv_buf_.reset();
     send_buf_.clear();
     join_error_.clear();
+    join_sent_ = false;
     name_field_.focused = false;
     state_ = ClientState::JoinName;
 }
@@ -298,6 +299,7 @@ void Client::handle_message(const std::string& line) {
         if (state_ == ClientState::JoinName) {
             // NAME_INVALID keeps the connection open — show and retry.
             join_error_ = err->reason;
+            join_sent_ = false;  // Allow retry after error
         } else {
             status_line_ = "Server error: " + err->reason;
         }
@@ -308,6 +310,8 @@ void Client::handle_message(const std::string& line) {
         player_id_ = welcome->player_id;
         config_ = welcome->config;
         join_error_.clear();
+        join_sent_ = false;
+        send_buf_.clear();  // Drop stale join data that wasn't flushed
         state_ = ClientState::Lobby;
         return;
     }
@@ -331,6 +335,7 @@ void Client::handle_message(const std::string& line) {
             departure_notice_.clear();
             winner_id_.clear();
             countdown_particles_init_ = false;
+            send_buf_.clear();  // Drop stale messages on state change
             state_ = ClientState::Lobby;
         }
         return;
@@ -414,6 +419,7 @@ void Client::return_to_discovery(const std::string& status) {
     winner_id_.clear();
     selected_server_ = -1;
     join_error_.clear();
+    join_sent_ = false;
     discovery_status_ = status;
     state_ = ClientState::Discovery;
     start_broadcast_discovery();
@@ -656,7 +662,7 @@ void Client::draw_discovery() {
 // ── Screen: Join name ────────────────────────────────────────────────────
 
 void Client::update_join_name() {
-    if (IsKeyPressed(KEY_ENTER)) {
+    if (!join_sent_ && IsKeyPressed(KEY_ENTER)) {
         const auto name = trimmed(name_field_.text);
         if (name.empty() ||
             name.size() >
@@ -669,6 +675,7 @@ void Client::update_join_name() {
             j["name"] = name;
             send_message(j);
             join_error_.clear();
+            join_sent_ = true;
         }
     }
 }
@@ -683,7 +690,7 @@ void Client::draw_join_name() {
     text_field(name_field_, 60, 200, 300, 40);
     DrawText("1-20 characters, no control characters", 375, 211, 14, GRAY);
 
-    if (button("Join", 60, 270, 140, 40)) {
+    if (!join_sent_ && button("Join", 60, 270, 140, 40)) {
         const auto name = trimmed(name_field_.text);
         if (name.empty() ||
             name.size() >
@@ -696,11 +703,17 @@ void Client::draw_join_name() {
             j["name"] = name;
             send_message(j);
             join_error_.clear();
+            join_sent_ = true;
         }
     }
 
     if (button("Back", 220, 270, 140, 40)) {
         return_to_discovery("Left the server");
+    }
+
+    // Visual feedback when join was sent but not yet acknowledged.
+    if (join_sent_ && join_error_.empty()) {
+        DrawText("Sending join request...", 60, 320, 16, YELLOW);
     }
 
     if (!join_error_.empty()) {

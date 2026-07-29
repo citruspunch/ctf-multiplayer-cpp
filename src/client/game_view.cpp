@@ -82,40 +82,41 @@ void draw_flag(const ctf::State& state, double scale) {
     const int   fx = static_cast<int>(state.flag.x * scale);
     const int   fy = static_cast<int>(state.flag.y * scale);
 
-    // Bobbing animation.
-    double bob = std::sin(GetTime() * 3.0) * 3.0;
+    // Bobbing animation — only when carried by a player.
+    double bob = owned ? (std::sin(GetTime() * 3.0) * 3.0) : 0.0;
     int fy_bob = fy + static_cast<int>(bob);
 
-    // ── Pulsing glow ring behind the flag (always visible) ───────────
+    // ── Pulsing glow ring behind the flag ────────────────────────────
     float glow_r = 14.0f + std::sin(static_cast<float>(GetTime()) * 2.5f) * 3.0f;
-    Color glow_col = owned ? Color{255, 60, 60, 100} : Color{255, 255, 200, 80};
+    Color glow_col = owned ? Color{255, 60, 60, 100} : Color{255, 200, 50, 120};
     DrawCircleLines(fx, fy_bob, glow_r, glow_col);
     DrawCircle(fx, fy_bob, glow_r - 2.0f,
                Color{glow_col.r, glow_col.g, glow_col.b,
                      static_cast<unsigned char>(glow_col.a / 2)});
 
     if (!owned) {
-        // Flag pole (brighter, thicker).
-        DrawLine(fx - 1, fy_bob - 12, fx - 1, fy_bob + 10,
-                 Color{180, 190, 210, 220});
-        DrawLine(fx, fy_bob - 12, fx, fy_bob + 10,
-                 Color{200, 210, 230, 255});
-        DrawLine(fx + 1, fy_bob - 12, fx + 1, fy_bob + 10,
-                 Color{180, 190, 210, 220});
+        // Free flag — orange/gold for high contrast against gray circle.
+        // Flag pole (visible against all backgrounds).
+        DrawLine(fx - 1, fy - 14, fx - 1, fy + 12,
+                 Color{80, 60, 20, 180});
+        DrawLine(fx, fy - 14, fx, fy + 12,
+                 Color{200, 160, 50, 255});
+        DrawLine(fx + 1, fy - 14, fx + 1, fy + 12,
+                 Color{80, 60, 20, 180});
 
-        // Flag fabric: larger, brighter two-triangle waving effect.
+        // Flag fabric: gold/orange waving triangles.
         DrawTriangle(
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 12)},
-            Vector2{static_cast<float>(fx + 14), static_cast<float>(fy_bob - 3)},
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 5)},
-            Color{255, 255, 240, 255});
+            Vector2{static_cast<float>(fx), static_cast<float>(fy - 14)},
+            Vector2{static_cast<float>(fx + 16), static_cast<float>(fy - 2)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy + 6)},
+            Color{255, 200, 50, 255});
         DrawTriangle(
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 5)},
-            Vector2{static_cast<float>(fx + 11), static_cast<float>(fy_bob + 12)},
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 12)},
-            Color{220, 220, 200, 220});
+            Vector2{static_cast<float>(fx), static_cast<float>(fy + 6)},
+            Vector2{static_cast<float>(fx + 12), static_cast<float>(fy + 14)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy + 14)},
+            Color{200, 150, 30, 220});
     } else {
-        // Carried flag — simpler but visible.
+        // Carried flag — red with bobbing animation.
         DrawTriangle(
             Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 10)},
             Vector2{static_cast<float>(fx + 8), static_cast<float>(fy_bob + 2)},
@@ -126,13 +127,12 @@ void draw_flag(const ctf::State& state, double scale) {
         DrawCircleLines(fx, fy_bob, 16.0f, Color{255, 40, 40, 60});
     }
 
-    // "FLAG" label with bright colors (always visible).
+    // "FLAG" label (orange when free, red when carried).
     const char* flag_label = "FLAG";
     int fl_font = owned ? 9 : 10;
-    int fl_tw = MeasureText(flag_label, fl_font);
-    DrawText(flag_label, fx + 18, fy_bob - fl_font / 2,
+    DrawText(flag_label, fx + 20, (owned ? fy_bob : fy) - fl_font / 2,
              fl_font, owned ? Color{255, 150, 150, 220}
-                            : Color{255, 255, 200, 220});
+                            : Color{255, 200, 50, 240});
 }
 
 void draw_player(const ctf::Player& p, const std::string& self_id,
@@ -212,8 +212,9 @@ void draw_hud(const ctf::State& state,
     // Top bar background.
     DrawRectangle(0, 0, WINDOW_W, 30, Color{0, 0, 0, 170});
 
-    // FPS counter with label so users understand what it shows.
-    int fps = GetFPS();
+    // FPS counter using per-frame timing (more reliable than GetFPS on macOS).
+    float dt = GetFrameTime();
+    int fps = (dt > 0.0f) ? static_cast<int>(1.0f / dt + 0.5f) : 0;
     std::string fps_str = std::to_string(fps) + " FPS";
     DrawText(fps_str.c_str(), 6, 7, 14, LIME);
 

@@ -128,6 +128,7 @@ private:
     // Join
     TextField   name_field_{};
     std::string join_error_;
+    bool        join_sent_{false};
 
     // Session data (filled from server messages)
     std::string              player_id_;

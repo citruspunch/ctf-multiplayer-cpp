@@ -385,20 +385,21 @@ void draw_server_circle(double scale) {
 void draw_server_flag(const ctf::game::FlagState& flag, double scale) {
     int fx = static_cast<int>(flag.x * scale);
     int fy = static_cast<int>(flag.y * scale);
-    double bob = std::sin(GetTime() * 3.0) * 3.0;
+    bool owned = flag.owner.has_value();
+
+    // Bobbing animation — only when carried by a player.
+    double bob = owned ? (std::sin(GetTime() * 3.0) * 3.0) : 0.0;
     int fy_bob = fy + static_cast<int>(bob);
 
     // Pulsing glow ring behind the flag.
     float glow_r = 14.0f + std::sin(static_cast<float>(GetTime()) * 2.5f) * 3.0f;
-    Color glow_col = flag.owner.has_value() ? Color{255, 60, 60, 100}
-                                            : Color{255, 255, 200, 80};
+    Color glow_col = owned ? Color{255, 60, 60, 100} : Color{255, 200, 50, 120};
     DrawCircleLines(fx, fy_bob, glow_r, glow_col);
     DrawCircle(fx, fy_bob, glow_r - 2.0f,
                Color{glow_col.r, glow_col.g, glow_col.b,
                      static_cast<unsigned char>(glow_col.a / 2)});
 
-    if (flag.owner.has_value()) {
-        // Carried flag.
+    if (owned) {
         DrawTriangle(
             Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 10)},
             Vector2{static_cast<float>(fx + 8), static_cast<float>(fy_bob + 2)},
@@ -406,33 +407,31 @@ void draw_server_flag(const ctf::game::FlagState& flag, double scale) {
             Color{255, 80, 80, 255});
         DrawCircleLines(fx, fy_bob, 16.0f, Color{255, 40, 40, 60});
     } else {
-        // Flag pole (thicker, visible).
-        DrawLine(fx - 1, fy_bob - 12, fx - 1, fy_bob + 10,
-                 Color{180, 190, 210, 220});
-        DrawLine(fx, fy_bob - 12, fx, fy_bob + 10,
-                 Color{200, 210, 230, 255});
-        DrawLine(fx + 1, fy_bob - 12, fx + 1, fy_bob + 10,
-                 Color{180, 190, 210, 220});
-
-        // Waving fabric.
+        // Free flag — orange/gold for high contrast.
+        DrawLine(fx - 1, fy - 14, fx - 1, fy + 12,
+                 Color{80, 60, 20, 180});
+        DrawLine(fx, fy - 14, fx, fy + 12,
+                 Color{200, 160, 50, 255});
+        DrawLine(fx + 1, fy - 14, fx + 1, fy + 12,
+                 Color{80, 60, 20, 180});
         DrawTriangle(
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob - 12)},
-            Vector2{static_cast<float>(fx + 14), static_cast<float>(fy_bob - 3)},
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 5)},
-            Color{255, 255, 240, 255});
+            Vector2{static_cast<float>(fx), static_cast<float>(fy - 14)},
+            Vector2{static_cast<float>(fx + 16), static_cast<float>(fy - 2)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy + 6)},
+            Color{255, 200, 50, 255});
         DrawTriangle(
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 5)},
-            Vector2{static_cast<float>(fx + 11), static_cast<float>(fy_bob + 12)},
-            Vector2{static_cast<float>(fx), static_cast<float>(fy_bob + 12)},
-            Color{220, 220, 200, 220});
+            Vector2{static_cast<float>(fx), static_cast<float>(fy + 6)},
+            Vector2{static_cast<float>(fx + 12), static_cast<float>(fy + 14)},
+            Vector2{static_cast<float>(fx), static_cast<float>(fy + 14)},
+            Color{200, 150, 30, 220});
     }
 
-    // FLAG label.
     const char* flag_label = "FLAG";
-    int fl_font = flag.owner.has_value() ? 9 : 10;
-    DrawText(flag_label, fx + 18, fy_bob - fl_font / 2,
-             fl_font, flag.owner.has_value() ? Color{255, 150, 150, 220}
-                                             : Color{255, 255, 200, 220});
+    int fl_font = owned ? 9 : 10;
+    int label_y = owned ? fy_bob : fy;
+    DrawText(flag_label, fx + 20, label_y - fl_font / 2,
+             fl_font, owned ? Color{255, 150, 150, 220}
+                            : Color{255, 200, 50, 240});
 }
 
 void draw_server_player(const ctf::game::PlayerState& ps,
@@ -491,8 +490,9 @@ void ServerView::draw_game_field(const std::string& phase_text) {
     DrawText(phase_text.c_str(),
              (WINDOW_W - text_w) / 2, 5,
              20, YELLOW);
-    // FPS counter with label.
-    int fps = GetFPS();
+    // FPS counter using per-frame timing.
+    float dt = GetFrameTime();
+    int fps = (dt > 0.0f) ? static_cast<int>(1.0f / dt + 0.5f) : 0;
     std::string fps_str = std::to_string(fps) + " FPS";
     DrawText(fps_str.c_str(), 6, 7, 14, LIME);
 
