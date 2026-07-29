@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <string>
+#include <thread>
 
 namespace ctf::client {
 
@@ -100,6 +101,12 @@ void Client::run() {
 #ifdef __APPLE__
         if (macos_quit_requested()) { window_open_ = false; break; }
 #endif
+
+        // Manual frame limiter (60 FPS ≈ 16.67 ms per frame).
+        // SetTargetFPS doesn't work reliably on macOS GL→Metal bridge
+        // without VSYNC_HINT (which caused black windows).
+        double frame_start = GetTime();
+
         update();
 
         // ESC handler inside update() sets window_open_ = false.
@@ -151,6 +158,15 @@ void Client::run() {
         // Dock doesn't show "Not Responding".
         pump_cocoa_main_queue();
 #endif
+
+        // Manual frame cap: sleep for the remainder of 16.67 ms.
+        constexpr double TARGET_FRAME = 1.0 / 60.0;
+        double elapsed = GetTime() - frame_start;
+        double remaining = TARGET_FRAME - elapsed;
+        if (remaining > 0.0) {
+            std::this_thread::sleep_for(
+                std::chrono::duration<double>(remaining));
+        }
     }
 }
 

@@ -11,8 +11,10 @@
 
 #include <raylib.h>
 
+#include <chrono>
 #include <cmath>
 #include <string>
+#include <thread>
 
 namespace ctf::server {
 
@@ -191,6 +193,9 @@ void ServerView::render(const std::string& phase_text,
         initialised_ = true;
     }
 
+    // Manual frame limiter (60 FPS ≈ 16.67 ms per frame).
+    double frame_start = GetTime();
+
     BeginDrawing();
     ClearBackground(gui::BG_COLOR);
 
@@ -213,6 +218,15 @@ void ServerView::render(const std::string& phase_text,
     }
     pump_cocoa_main_queue();
 #endif
+
+    // Manual frame cap: sleep for the remainder of 16.67 ms.
+    constexpr double TARGET_FRAME = 1.0 / 60.0;
+    double elapsed = GetTime() - frame_start;
+    double remaining = TARGET_FRAME - elapsed;
+    if (remaining > 0.0) {
+        std::this_thread::sleep_for(
+            std::chrono::duration<double>(remaining));
+    }
 }
 
 // ── Lobby view: centered panel with IP, player roster, and START button ──
