@@ -757,14 +757,13 @@ void Client::draw_lobby() {
     DrawText(id_line.c_str(), (WINDOW_W - MeasureText(id_line.c_str(), 16)) / 2,
              80, 16, gui::TEXT_DIM);
 
-    // ── Compact server config panel (top-right) ─────────────────────
-    constexpr float CX = 580, CY = 30, CW = 200, CH = 120;
+    // ── Compact server config panel (top-right, shorter to avoid overlap) ─
+    constexpr float CX = 580, CY = 5, CW = 200, CH = 105;
     DrawRectangleRounded(Rectangle{CX, CY, CW, CH}, 0.12f, 6,
                          gui::PANEL_COLOR);
     DrawRectangleRoundedLines(Rectangle{CX, CY, CW, CH}, 0.12f, 6,
                               Color{60, 65, 75, 200});
-    DrawText("Server", CX + 10, CY + 6, 14, gui::ACCENT_BLUE);
-    DrawText("Config", CX + 10, CY + 22, 14, gui::ACCENT_BLUE);
+    DrawText("Server Config", CX + 10, CY + 8, 14, gui::ACCENT_BLUE);
     if (config_) {
         auto line = [&](const char* key, int value, float y) {
             DrawText(key, static_cast<int>(CX + 10), static_cast<int>(y),
@@ -773,14 +772,14 @@ void Client::draw_lobby() {
                      static_cast<int>(CX + 110), static_cast<int>(y),
                      13, WHITE);
         };
-        line("Map",       config_->map_size,        CY + 46);
-        line("Speed",     config_->speed,           CY + 66);
-        line("Tick",      config_->tick_rate,       CY + 86);
-        line("Radius",    config_->player_radius,   CY + 106);
+        line("Map",       config_->map_size,        CY + 32);
+        line("Speed",     config_->speed,           CY + 50);
+        line("Tick",      config_->tick_rate,       CY + 68);
+        line("Radius",    config_->player_radius,   CY + 86);
     }
 
-    // ── Player table ────────────────────────────────────────────────
-    constexpr float TX = 80, TY = 130, TW = 560, ROW_H = 30;
+    // ── Player table (moved down to avoid overlap with config panel) ─
+    constexpr float TX = 80, TY = 140, TW = 560, ROW_H = 30;
     constexpr int MAX_ROWS = 14;
 
     // Header
@@ -861,14 +860,14 @@ void Client::draw_lobby() {
     Color status_col;
     auto count = lobby_players_.size();
     if (count < static_cast<std::size_t>(constants::min_players)) {
-        status = "⏳ Waiting for players (" +
+        status = "[WAITING] " +
                  std::to_string(count) + "/" +
                  std::to_string(constants::min_players) +
-                 " minimum)";
+                 " players";
         status_col = YELLOW;
     } else {
-        status = "✓ Game starting soon! (" +
-                 std::to_string(count) + " players connected)";
+        status = "[READY] " +
+                 std::to_string(count) + " players connected - starting soon!";
         status_col = GREEN;
     }
     int status_tw = MeasureText(status.c_str(), 16);
@@ -1021,9 +1020,9 @@ void Client::draw_game_over() {
     // ── Winner banner ────────────────────────────────────────────────
     std::string winner_line;
     if (winner_id_ == player_id_) {
-        winner_line = "🏆  You Win!  🏆";
+        winner_line = "*** YOU WIN! ***";
     } else {
-        winner_line = "🏆  " + name_of(winner_id_) + " Wins!  🏆";
+        winner_line = "*** " + name_of(winner_id_) + " WINS! ***";
     }
 
     // Shadow
@@ -1056,10 +1055,10 @@ void Client::draw_game_over() {
     for (std::size_t i = 0; i < lobby_players_.size(); ++i) {
         if (i > 0) roster += ", ";
         roster += lobby_players_[i].name;
-        if (lobby_players_[i].id == winner_id_) roster += " ★";
+        if (lobby_players_[i].id == winner_id_) roster += " (WINNER)";
     }
-    if (roster.size() > 70) {
-        roster.resize(70);
+    if (roster.size() > 80) {
+        roster.resize(80);
         roster += "...";
     }
     int roster_tw = MeasureText(roster.c_str(), 14);

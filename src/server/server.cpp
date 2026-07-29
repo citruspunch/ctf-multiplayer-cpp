@@ -323,6 +323,17 @@ void Server::dispatch_message(Session& session, const std::string& raw) {
 void Server::handle_join(Session& session, const ctf::Join& msg) {
     // Already joined → INVALID_PHASE (no close).
     if (session.joined) {
+        std::cerr << "[server] INVALID_PHASE: duplicate join from "
+                  << session.player_id << " (name=" << session.player_name
+                  << "), phase=";
+        switch (phase_) {
+            case Phase::Lobby:      std::cerr << "LOBBY"; break;
+            case Phase::Countdown:  std::cerr << "COUNTDOWN"; break;
+            case Phase::Playing:    std::cerr << "PLAYING"; break;
+            case Phase::PostGame:   std::cerr << "POST_GAME"; break;
+        }
+        std::cerr << ", pending_disconnects=" << pending_disconnects_.size()
+                  << "\n";
         send_error(session, INVALID_PHASE, false);
         return;
     }
