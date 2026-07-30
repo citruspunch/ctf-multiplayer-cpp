@@ -9,7 +9,8 @@ One executable runs in two modes:
 
 This project implements the **CTF CC8 2026 Protocol Standard v1.2.0** (protocol `v: 1`) and is designed to interoperate with other class projects implementing the same spec. See [docs/SPEC.md](docs/SPEC.md) for the full protocol specification.
 
-> **Documentación del proyecto (enunciado):** [`Documentación de Implementación - Captura la Bandera C++.pdf`](./docs/Documentación%20de%20Implementación%20-%20Captura%20la%20Bandera%20C++.pdf)
+> **Project Documentation:** [`Documentación de Implementación - Captura la Bandera C++.pdf`](./docs/Documentación%20de%20Implementación%20-%20Captura%20la%20Bandera%20C++.pdf)
+> **Daily Development Log:** [`docs/IMPLEMENTATION.md`](./docs/IMPLEMENTATION.md) — chronologically tracks every implemented task with Git commit references
 
 ---
 

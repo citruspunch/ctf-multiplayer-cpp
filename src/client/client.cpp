@@ -587,7 +587,7 @@ void Client::update_discovery() {
 }
 
 void Client::draw_discovery() {
-    DrawText("CTF — Server Discovery", 60, 30, 30, WHITE);
+    DrawText("CTF - Server Discovery", 60, 30, 30, WHITE);
 
     if (discovering_) {
         draw_spinner(610, 45, "Discovering servers...");
